@@ -22,6 +22,8 @@ export class Input {
       if (e.code === 'KeyH') this._edges.add('debug');
       if (e.code === 'KeyF' || e.code === 'KeyE') this._edges.add('use');
       if (e.code === 'KeyV' || e.code === 'KeyC') this._edges.add('view');
+      if (e.code === 'KeyB') this._edges.add('binoc');
+      if (e.code === 'KeyM' || e.code === 'KeyP') this._edges.add('phone');
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => { this.keys.clear(); this.fireHeld = false; this.aim = false; });
@@ -166,6 +168,8 @@ export class Input {
     jb.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); this._edges.add('jump'); this.jumpHeld = true; this._jumpTouch = true; }, { passive: false });
     jb.addEventListener('touchend', () => { this.jumpHeld = false; this._jumpTouch = false; });
     tap('#btn-use', () => this._edges.add('use'));
+    tap('#btn-binoc', () => this._edges.add('binoc'));
+    tap('#btn-phone', () => this._edges.add('phone'));
     tap('#btn-view', () => this._edges.add('view'));
     tap('#btn-pause', () => this._edges.add('pause'));
     this.syncAimButton = () => root.querySelector('#btn-aim').classList.toggle('on', this.aim);

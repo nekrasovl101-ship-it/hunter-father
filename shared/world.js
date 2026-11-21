@@ -1,5 +1,6 @@
 // Расстановка деревьев/камней (детерминированно) + пространственная сетка
 // для коллизий и проверки линии выстрела. Используется клиентом и сервером.
+import { houseLayout } from './houses.js';
 import { HALF, PLAY_LIMIT, heightAt, slopeAt, forestAt, riverDist, RIVER_HALF, fbm, SITES, SITE_SIZE, roadDist, siteDist, ROAD_HALF } from './terrain.js';
 
 export function mulberry32(seed) {
@@ -23,16 +24,33 @@ export class World {
     this.buildings = [];
     const rnd = mulberry32(seed);
 
-    // постройки: ориентированные коробки (OBB) для коллизий и пуль
+    // постройки: стены с проёмами + мебель — ориентированные коробки (OBB) для коллизий и пуль.
+    // В дома можно заходить через дверь.
     for (const site of SITES) {
-      const [w, d] = SITE_SIZE[site.type];
-      const b = { x: site.x, z: site.z, y0: site.h - 0.5, y1: site.h + (site.type === 'shed' ? 3.2 : 5.5),
-        hw: w / 2, hd: d / 2, rot: site.rot, c: Math.cos(site.rot), s: Math.sin(site.rot), r: Math.hypot(w, d) / 2, type: site.type };
-      this.buildings.push(b);
-      // в сетку добавляем во все клетки, которые она задевает
-      for (let ox = -b.r; ox <= b.r; ox += CELL / 2) for (let oz = -b.r; oz <= b.r; oz += CELL / 2) {
-        const i = this._cellIndex(b.x + ox, b.z + oz);
-        if (i >= 0 && !(this.grid[i] ||= []).some((e) => e.o === b)) this.grid[i].push({ o: b, kind: 'box' });
+      const L = houseLayout(site.type);
+      const c = Math.cos(site.rot), s = Math.sin(site.rot);
+      const r = Math.hypot(L.w, L.d) / 2;
+      // локальная точка → мир (поворот как у Matrix4.makeRotationY)
+      const at = (lx, lz) => [site.x + lx * c + lz * s, site.z - lx * s + lz * c];
+      const boxes = [];
+      for (const q of L.walls) {
+        const [x, z] = at(q.lx, q.lz);
+        boxes.push({ x, z, y0: site.h + q.y0 - (q.y0 === 0 ? 0.5 : 0), y1: site.h + q.y1, hw: q.hw, hd: q.hd, rot: site.rot, c, s });
+      }
+      for (const f of L.furniture) {
+        const [x, z] = at(f.lx, f.lz);
+        boxes.push({ x, z, y0: site.h, y1: site.h + f.h, hw: f.hw, hd: f.hd, rot: site.rot, c, s, low: f.h < 0.9 });
+      }
+      // крыша — только для пуль (над головой)
+      boxes.push({ x: site.x, z: site.z, y0: site.h + L.H, y1: site.h + L.H + 2.2, hw: L.w / 2, hd: L.d / 2, rot: site.rot, c, s, roof: true });
+      const bld = { x: site.x, z: site.z, r, type: site.type, rot: site.rot, h: site.h, layout: L, boxes };
+      this.buildings.push(bld);
+      for (const b of boxes) {
+        b.r = Math.hypot(b.hw, b.hd);
+        for (let ox = -r; ox <= r; ox += CELL / 2) for (let oz = -r; oz <= r; oz += CELL / 2) {
+          const i = this._cellIndex(site.x + ox, site.z + oz);
+          if (i >= 0 && !(this.grid[i] ||= []).some((e) => e.o === b)) this.grid[i].push({ o: b, kind: 'box' });
+        }
       }
     }
 
@@ -102,7 +120,13 @@ export class World {
   collide(pos, radius) {
     const list = this.near(pos.x, pos.z, this._tmp || (this._tmp = []));
     for (const { o, kind } of list) {
-      if (kind === 'box') { collideBox(pos, radius, o); continue; }
+      if (kind === 'box') {
+        // балки над дверью, окна сверху, крыша — не мешают ходить
+        if (pos.y !== undefined && (o.y0 > pos.y + 1.9 || o.y1 < pos.y + 0.35)) continue;
+        if (pos.y === undefined && (o.roof || o.y0 > o.y1 - 1)) continue;
+        collideBox(pos, radius, o);
+        continue;
+      }
       const dx = pos.x - o.x, dz = pos.z - o.z;
       const min = o.r + radius;
       const d2 = dx * dx + dz * dz;

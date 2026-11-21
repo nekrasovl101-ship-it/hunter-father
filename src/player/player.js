@@ -21,9 +21,9 @@ export class Player {
     this.platform = null;   // {x, z, y, r} — стоим на вышке
   }
 
-  update(dt, input, aimT) {
+  update(dt, input, aimT, binocT = 0) {
     const look = input.takeLook();
-    const zoom = THREE.MathUtils.lerp(1, 0.22, aimT);
+    const zoom = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1, 0.22, aimT), 0.12, binocT);
     const sens = 0.0022 * zoom;
     this.yaw -= look.x * sens;
     this.pitch -= look.y * sens;
@@ -36,7 +36,7 @@ export class Player {
 
     const inWater = this.pos.y < WATER_LEVEL - 0.4;
     let max = input.sprint && aimT < 0.3 ? 7.2 : 4.3;
-    if (aimT > 0.5) max = 2.2;
+    if (aimT > 0.5 || binocT > 0.5) max = 2.2;
     if (inWater) max *= 0.45;
 
     const f = input.move.y, s = input.move.x;
@@ -74,7 +74,7 @@ export class Player {
     const bob = this.onGround ? Math.sin(performance.now() * 0.001 * (4 + this.speed * 1.4)) * Math.min(this.speed, 7) * 0.012 * (1 - aimT) : 0;
     this.camera.position.set(this.pos.x, this.pos.y + EYE + bob, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-    const fov = THREE.MathUtils.lerp(this.baseFov, 14, aimT * aimT);
+    const fov = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.baseFov, 14, aimT * aimT), 9, binocT * binocT);
     if (Math.abs(fov - this.camera.fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
   }
 

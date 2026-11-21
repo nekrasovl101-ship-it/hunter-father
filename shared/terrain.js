@@ -87,6 +87,15 @@ const SITE_CANDIDATES = [
   { x: -60, z: -285, rot: 0.3, type: 'cabin' },
   { x: 265, z: -55, rot: 1.6, type: 'shed' },
   { x: -285, z: -10, rot: -1.2, type: 'cabin' },
+  // хутора поближе к базе
+  { x: 95, z: 70, rot: -1.0, type: 'cabin' },
+  { x: 104, z: 82, rot: -1.0, type: 'shed' },
+  { x: -115, z: 90, rot: 2.0, type: 'lodge' },
+  { x: 70, z: -125, rot: 0.4, type: 'cabin' },
+  { x: -130, z: -40, rot: -1.9, type: 'cabin' },
+  { x: 30, z: 235, rot: 3.0, type: 'cabin' },
+  { x: -215, z: -235, rot: 0.9, type: 'cabin' },
+  { x: 240, z: 40, rot: 1.9, type: 'lodge' },
 ];
 export const SITE_SIZE = { lodge: [11, 8], cabin: [7, 6], shed: [4, 3.5] };
 

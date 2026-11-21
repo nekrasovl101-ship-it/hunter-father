@@ -32,9 +32,12 @@ export async function initTextures(renderer) {
   }
 }
 
-function loadOne(file, srgb, anisotropy) {
-  const useKtx = ktx2 && manifest.ktx2.includes(file);
-  const url = `textures/${file}.${useKtx ? 'ktx2' : 'jpg'}`;
+// Набор 2K-текстур для «Ультры» (tools/fetch-hd-textures.sh)
+const HD = new Set(['leafy_grass', 'forest_ground_04', 'brown_mud_leaves_01', 'rock_boulder_dry', 'pine_bark', 'bark_brown_02', 'wood_trunk_wall', 'roof_planks', 'wood_planks']);
+
+function loadOne(file, srgb, anisotropy, hd = false) {
+  const useKtx = !hd && ktx2 && manifest.ktx2.includes(file);
+  const url = `textures/${hd ? 'hd/' : ''}${file}.${useKtx ? 'ktx2' : 'jpg'}`;
   return new Promise((resolve) => {
     const done = (t) => {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -55,12 +58,13 @@ export function loadImage(url) {
   return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
 }
 
-export async function loadSet(key, { normal = true, anisotropy = 4 } = {}) {
+export async function loadSet(key, { normal = true, anisotropy = 4, hd = false } = {}) {
   const id = TEXTURE_SETS[key];
+  const h = hd && HD.has(id);
   const [albedo, nrm, rough] = await Promise.all([
-    loadOne(`${id}_albedo`, true, anisotropy),
-    normal ? loadOne(`${id}_normal`, false, anisotropy) : null,
-    loadOne(`${id}_rough`, false, anisotropy),
+    loadOne(`${id}_albedo`, true, anisotropy, h),
+    normal ? loadOne(`${id}_normal`, false, anisotropy, h) : null,
+    loadOne(`${id}_rough`, false, anisotropy, h),
   ]);
   return { albedo, normal: nrm, rough };
 }

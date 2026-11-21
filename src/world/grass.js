@@ -151,7 +151,7 @@ export function createGrass(preset, heightTex, shared) {
   const rnd = mulberry32(777);
   const group = new THREE.Group();
   const tile = preset.grassDist * 2.1;
-  const grass = makeLayer(bladeClump(rnd, 7), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false);
+  const grass = makeLayer(bladeClump(rnd, preset.grassBlades || 7), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false);
   const flowers = makeLayer(flowerGeo(), Math.round(preset.grass * 0.12), tile, preset.grassDist * 0.8, heightTex, shared, rnd, true);
   group.add(grass, flowers);
   group.update = (camPos, playerPos) => {

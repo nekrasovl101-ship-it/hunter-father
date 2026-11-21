@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SITES, SITE_SIZE, forestAt, riverDist, roadDist, siteDist, slopeAt, heightAt, RIVER_HALF, PLAY_LIMIT } from '../../shared/terrain.js';
 import { mulberry32 } from '../../shared/world.js';
+import { houseLayout, WIN } from '../../shared/houses.js';
 
 // Процедурные избы из брёвен с PBR-текстурами (Poly Haven), сараи и вышки.
 // Все постройки склеиваются в один меш на материал → ~6 draw calls на всю карту.
@@ -42,18 +43,16 @@ class Builder {
 
 function cabin(type, rnd) {
   const b = new Builder();
-  const [w, d] = SITE_SIZE[type];
-  const isShed = type === 'shed';
-  const H = isShed ? 2.6 : type === 'lodge' ? 3.3 : 3.0;
-  const t = 0.32;
+  const L = houseLayout(type);
+  const { w, d, H, t, door, isShed } = L;
   const wallMat = isShed ? 'planks' : 'logs';
-  // фундамент
+  // фундамент и пол
   b.add('stone', box(w + 0.35, 0.9, d + 0.35, 0, -0.35, 0), 0.6);
-  // стены
-  b.add(wallMat, box(w, H, t, 0, H / 2, d / 2 - t / 2));
-  b.add(wallMat, box(w, H, t, 0, H / 2, -d / 2 + t / 2));
-  b.add(wallMat, box(t, H, d - 2 * t, w / 2 - t / 2, H / 2, 0));
-  b.add(wallMat, box(t, H, d - 2 * t, -w / 2 + t / 2, H / 2, 0));
+  b.add('floor', box(w - 2 * t, 0.06, d - 2 * t, 0, 0.13, 0), 0.7);
+  // стены с проёмами (та же планировка, что и для коллизий)
+  for (const q of L.walls) b.add(wallMat, box(q.hw * 2, q.y1 - q.y0, q.hd * 2, q.lx, (q.y0 + q.y1) / 2, q.lz));
+  // потолочные балки
+  if (!isShed) for (let x = -w / 2 + 1.2; x < w / 2 - 0.6; x += 1.6) b.add('bark', new THREE.CylinderGeometry(0.11, 0.11, d - 2 * t, 7).rotateX(Math.PI / 2).translate(x, H - 0.12, 0), 1);
   if (!isShed) {
     // выступающие концы брёвен на углах
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
@@ -73,7 +72,7 @@ function cabin(type, rnd) {
   for (const s of [1, -1]) {
     const g = new THREE.BoxGeometry(w + 2 * ov, 0.14, half);
     g.rotateX(s * pitch);
-    g.translate(0, H + ridgeH / 2 - (ov * Math.tan(pitch)) / 2 + 0.08, (s * (d / 2 + ov)) / 2 - s * 0.0);
+    g.translate(0, H + ridgeH / 2 - (ov * Math.tan(pitch)) / 2 + 0.08, (s * (d / 2 + ov)) / 2);
     b.add('roof', g, 0.5);
   }
   b.add('planks', box(w + 2 * ov, 0.18, 0.22, 0, H + ridgeH + 0.12, 0), 0.5); // конёк
@@ -82,44 +81,101 @@ function cabin(type, rnd) {
     const shape = new THREE.Shape([new THREE.Vector2(-d / 2, 0), new THREE.Vector2(d / 2, 0), new THREE.Vector2(0, ridgeH)]);
     const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false });
     g.rotateY(Math.PI / 2).translate(s * (w / 2) - (s > 0 ? t : 0), H, 0);
-    b.add(isShed ? 'planks' : 'planks', g, 0.5);
+    b.add('planks', g, 0.5);
   }
-  // дверь
-  const doorX = isShed ? 0 : -w * 0.22;
-  b.add('door', box(isShed ? 1.8 : 1.0, 2.05, 0.08, doorX, 1.03, d / 2 + 0.03), 0.6);
-  for (const s of [-1, 1]) b.add('planks', box(0.12, 2.25, 0.14, doorX + s * (isShed ? 0.96 : 0.56), 1.12, d / 2 + 0.05), 1);
-  b.add('planks', box(isShed ? 2.1 : 1.25, 0.14, 0.14, doorX, 2.2, d / 2 + 0.05), 1);
-  // окна со ставнями
-  const windows = [];
-  if (!isShed) {
-    windows.push([w * 0.22, d / 2 + 0.03, 0], [-w * 0.2, -d / 2 - 0.03, Math.PI], [w * 0.2, -d / 2 - 0.03, Math.PI]);
-    windows.push([w / 2 + 0.03, 0, Math.PI / 2], [-w / 2 - 0.03, 0, -Math.PI / 2]);
-    if (type === 'lodge') windows.push([w * 0.42, d / 2 + 0.03, 0]);
-  }
-  for (const [wx, wz, wr] of windows) {
+  // дверь — открыта внутрь, косяки и порог
+  const dx = door.x, dw = door.w;
+  b.add('door', box(0.06, door.h - 0.05, dw - 0.05, dx - dw / 2 + 0.06, door.h / 2 + 0.12, d / 2 - t - dw / 2 + 0.02), 0.6);
+  for (const s of [-1, 1]) b.add('planks', box(0.12, door.h + 0.15, t + 0.1, dx + s * (dw / 2 + 0.06), (door.h + 0.15) / 2, d / 2 - t / 2), 1);
+  b.add('planks', box(dw + 0.36, 0.14, t + 0.1, dx, door.h + 0.07, d / 2 - t / 2), 1);
+  b.add('planks', box(dw, 0.05, t, dx, 0.14, d / 2 - t / 2), 1);
+  // окна: рама насквозь, стекло, ставни снаружи
+  const sideXform = { front: [0, d / 2 - t / 2, 0], back: [0, -d / 2 + t / 2, Math.PI], right: [w / 2 - t / 2, 0, Math.PI / 2], left: [-w / 2 + t / 2, 0, -Math.PI / 2] };
+  for (const [side, pos] of L.windows) {
+    const [ox, oz, r] = sideXform[side];
+    const along = side === 'front' ? pos : side === 'back' ? -pos : side === 'right' ? -pos : pos;
+    const { w: ww, y0, y1 } = WIN;
+    const ym = (y0 + y1) / 2, wh = y1 - y0;
     const parts = [
-      ['glass', box(0.95, 0.85, 0.04, 0, 1.55, 0)],
-      ['planks', box(1.15, 0.1, 0.1, 0, 2.02, 0.03)], ['planks', box(1.15, 0.1, 0.12, 0, 1.08, 0.04)],
-      ['planks', box(0.08, 0.95, 0.1, -0.53, 1.55, 0.03)], ['planks', box(0.08, 0.95, 0.1, 0.53, 1.55, 0.03)],
-      ['planks', box(0.05, 0.85, 0.06, 0, 1.55, 0.03)],
-      ['door', box(0.5, 0.95, 0.05, -0.85, 1.55, 0.05)], ['door', box(0.5, 0.95, 0.05, 0.85, 1.55, 0.05)],
+      ['glass', box(ww, wh, 0.03, along, ym, 0)],
+      ['planks', box(ww + 0.2, 0.1, t + 0.12, along, y1 + 0.05, 0)], ['planks', box(ww + 0.25, 0.08, t + 0.22, along, y0 - 0.04, 0.02)],
+      ['planks', box(0.1, wh, t + 0.1, along - ww / 2 - 0.05, ym, 0)], ['planks', box(0.1, wh, t + 0.1, along + ww / 2 + 0.05, ym, 0)],
+      ['planks', box(0.05, wh, 0.06, along, ym, 0.02)], ['planks', box(ww, 0.05, 0.06, along, ym, 0.02)],
+      ['door', box(0.5, wh + 0.1, 0.05, along - ww / 2 - 0.3, ym, t / 2 + 0.05)], ['door', box(0.5, wh + 0.1, 0.05, along + ww / 2 + 0.3, ym, t / 2 + 0.05)],
     ];
-    const m = new THREE.Matrix4().makeRotationY(wr).setPosition(wx, 0, wz);
+    const m = new THREE.Matrix4().makeRotationY(r).setPosition(ox, 0, oz);
     for (const [mat, g] of parts) b.add(mat, g.applyMatrix4(m), 1);
   }
   // крыльцо с навесом
   if (!isShed) {
     const pd = 2.2;
-    b.add('planks', box(w * 0.9, 0.16, pd, 0, 0.32, d / 2 + pd / 2), 0.7);
-    b.add('planks', box(1.2, 0.16, 0.5, doorX, 0.12, d / 2 + pd + 0.25), 0.7);
-    for (const px of [-w * 0.43, 0, w * 0.43]) b.add('bark', new THREE.CylinderGeometry(0.1, 0.12, H - 0.3, 7).translate(px, (H - 0.3) / 2 + 0.3, d / 2 + pd - 0.15), 1);
+    b.add('planks', box(w * 0.9, 0.16, pd, 0, 0.12, d / 2 + pd / 2), 0.7);
+    for (const px of [-w * 0.43, 0, w * 0.43]) b.add('bark', new THREE.CylinderGeometry(0.1, 0.12, H - 0.1, 7).translate(px, (H - 0.1) / 2 + 0.1, d / 2 + pd - 0.15), 1);
     const pr = new THREE.BoxGeometry(w * 0.95, 0.1, pd + 0.5).rotateX(0.22).translate(0, H + 0.02, d / 2 + pd / 2 + 0.1);
     b.add('roof', pr, 0.5);
-    b.add('planks', box(w * 0.9, 0.08, 0.08, 0, 1.0, d / 2 + pd - 0.12), 1); // перила
+    b.add('planks', box(w * 0.38, 0.08, 0.08, w * 0.24, 1.0, d / 2 + pd - 0.12), 1); // перила
   }
-  // печная труба
-  if (!isShed) b.add('stone', box(0.85, H + ridgeH + 1.4, 0.85, w / 2 - 1.0, (H + ridgeH + 1.4) / 2, -d * 0.2), 0.6);
+  // мебель
+  for (const f of L.furniture) furniture(b, f, H, ridgeH);
   return b;
+}
+
+// Мебель внутри (процедурная): печь с трубой, кровать, стол, лавки, полка, сундук, оружейная стойка
+function furniture(b, f, H, ridgeH) {
+  const { lx, lz, hw, hd, h } = f;
+  const at = (g) => g.translate(lx, 0.16, lz);
+  switch (f.kind) {
+    case 'stove': {
+      b.add('stone', at(box(hw * 2, h, hd * 2, 0, h / 2, 0)), 0.8);
+      b.add('fire', at(box(0.05, 0.32, 0.5, -hw - 0.005, 0.42, 0)), 1);
+      b.add('stone', at(box(0.42, H + ridgeH + 1.4 - h, 0.42, 0, h + (H + ridgeH + 1.4 - h) / 2, 0)), 0.8);
+      break;
+    }
+    case 'bed': {
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add('planks', at(box(0.08, 0.5, 0.08, sx * (hw - 0.04), 0.25, sz * (hd - 0.04))), 1);
+      b.add('planks', at(box(hw * 2, 0.08, hd * 2, 0, 0.3, 0)), 1);
+      b.add('cloth', at(box(hw * 2 - 0.1, 0.16, hd * 2 - 0.08, 0, 0.42, 0)), 1);
+      b.add('blanket', at(box(hw * 1.3, 0.05, hd * 2 - 0.02, hw * 0.3, 0.52, 0)), 1);
+      b.add('cloth', at(box(0.4, 0.1, hd * 1.4, -hw + 0.3, 0.55, 0)), 1);
+      break;
+    }
+    case 'table': {
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add('planks', at(box(0.08, h - 0.05, 0.08, sx * (hw - 0.08), (h - 0.05) / 2, sz * (hd - 0.08))), 1);
+      b.add('planks', at(box(hw * 2, 0.06, hd * 2, 0, h - 0.03, 0)), 1);
+      b.add('lamp', at(new THREE.CylinderGeometry(0.06, 0.08, 0.2, 10).translate(0.25, h + 0.1, 0)), 1);
+      b.add('bark', at(new THREE.CylinderGeometry(0.05, 0.04, 0.12, 8).translate(-0.3, h + 0.06, 0.1)), 1); // кружка
+      break;
+    }
+    case 'bench': {
+      b.add('planks', at(box(hw * 2, 0.06, hd * 2, 0, h, 0)), 1);
+      for (const sx of [-1, 1]) b.add('planks', at(box(0.06, h, hd * 1.6, sx * (hw - 0.1), h / 2, 0)), 1);
+      break;
+    }
+    case 'shelf': {
+      for (let y = 0.3; y < h; y += 0.5) b.add('planks', at(box(hw * 2, 0.04, hd * 2, 0, y, 0)), 1);
+      for (const sz of [-1, 1]) b.add('planks', at(box(hw * 2, h, 0.04, 0, h / 2, sz * hd)), 1);
+      for (let i = 0; i < 4; i++) b.add(i % 2 ? 'cloth' : 'bark', at(box(0.22, 0.22, 0.25, 0, 0.84, -hd + 0.25 + i * 0.3)), 1);
+      break;
+    }
+    case 'chest': {
+      b.add('door', at(box(hw * 2, h, hd * 2, 0, h / 2, 0)), 1);
+      b.add('metal', at(box(hw * 2 + 0.02, 0.05, hd * 2 + 0.02, 0, h * 0.75, 0)), 1);
+      break;
+    }
+    case 'rack': {
+      b.add('planks', at(box(hw * 2, 0.08, 0.14, 0, 1.4, 0)), 1);
+      b.add('planks', at(box(hw * 2, 0.08, 0.2, 0, 0.3, 0.03)), 1);
+      // рога над стойкой
+      for (const s of [-1, 1]) for (let i = 0; i < 3; i++) b.add('antler', at(new THREE.CylinderGeometry(0.02, 0.035, 0.45 - i * 0.1, 5).rotateZ(s * (0.5 + i * 0.35)).translate(s * (0.15 + i * 0.08), 2.05 + i * 0.1, 0.05)), 1);
+      b.add('door', at(box(0.3, 0.4, 0.05, 0, 1.95, 0.0)), 1);
+      break;
+    }
+    case 'crates': {
+      b.add('planks', at(box(0.8, 0.8, 0.8, 0, 0.4, 0)), 0.8);
+      b.add('planks', at(box(0.55, 0.55, 0.55, 0.05, 1.08, 0.05).rotateY(0.3)), 0.8);
+      break;
+    }
+  }
 }
 
 function woodpile(b, x, z, rot) {
@@ -218,7 +274,14 @@ export function createBuildings(world, preset, sets) {
     roof: mk(sets.roof, { color: 0xb0a898 }),
     stone: mk(sets.rock),
     bark: mk(sets.bark),
-    glass: new THREE.MeshStandardMaterial({ color: 0x1a2228, roughness: 0.08, metalness: 0.6, emissive: 0xffa040, emissiveIntensity: 0 }),
+    glass: new THREE.MeshStandardMaterial({ color: 0x9fb4c0, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.28, depthWrite: false, emissive: 0xffa040, emissiveIntensity: 0 }),
+    floor: mk(sets.planks, { color: 0x9a8064 }),
+    cloth: new THREE.MeshStandardMaterial({ color: 0xcfc4ac, roughness: 0.95 }),
+    blanket: new THREE.MeshStandardMaterial({ color: 0x7a2a22, roughness: 0.9 }),
+    metal: new THREE.MeshStandardMaterial({ color: 0x3a3a38, roughness: 0.5, metalness: 0.8 }),
+    antler: new THREE.MeshStandardMaterial({ color: 0xd8ccb0, roughness: 0.7 }),
+    fire: new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff6a18, emissiveIntensity: 2.2 }),
+    lamp: new THREE.MeshStandardMaterial({ color: 0x302820, emissive: 0xffc060, emissiveIntensity: 1.6 }),
   };
   const group = new THREE.Group();
   for (const [name, list] of Object.entries(all.parts)) {
@@ -228,7 +291,8 @@ export function createBuildings(world, preset, sets) {
       return g;
     }));
     const mesh = new THREE.Mesh(geo, mats[name]);
-    mesh.castShadow = preset.shadows;
+    mesh.castShadow = preset.shadows && name !== 'glass';
+    if (name === 'glass') mesh.renderOrder = 5;
     mesh.receiveShadow = preset.shadows;
     mesh.matrixAutoUpdate = false;
     group.add(mesh);

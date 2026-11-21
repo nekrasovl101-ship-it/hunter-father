@@ -51,6 +51,17 @@
     </div>
   </div>
 
+  <!-- Предупреждение: «Ультра» на телефоне -->
+  <div id="ultra-warn" class="screen hidden">
+    <div class="panel">
+      <h2>⚠️ Графика «Ультра»</h2>
+      <p class="sub">Этот режим сделан для компьютеров с видеокартой. На телефоне лучше не включать:
+        телефон может сильно нагреться, игра будет тормозить, а Safari может перезагрузить страницу.</p>
+      <button id="ultra-cancel" class="primary">Оставить «Среднюю»</button>
+      <button id="ultra-ok">Всё равно включить</button>
+    </div>
+  </div>
+
   <div id="loading" class="screen hidden">
     <div class="panel">
       <h1>Hunter Father</h1>
@@ -86,6 +97,13 @@
     <div id="crosshair"></div>
     <div id="hitmark"></div>
     <div id="scope"><div class="reticle"></div></div>
+    <div id="binoc"><div class="lens"></div><div id="binoc-range"></div></div>
+    <div id="phone">
+      <div class="bar"><span id="phone-time">12:00</span><span>GPS · Охота</span><span>▮▮▮ 82%</span></div>
+      <canvas id="phone-map" width="300" height="300"></canvas>
+      <div id="phone-info"></div>
+      <div class="row"><button id="phone-zoom">🔍 Масштаб</button><button id="phone-close">✕ Убрать</button></div>
+    </div>
     <div id="messages"></div>
     <div id="health"><div id="health-bar"></div></div>
     <div id="prompt"></div>
@@ -107,6 +125,8 @@
     <button id="btn-pause">❚❚</button>
     <button id="btn-use" class="hidden">🚙</button>
     <button id="btn-view" class="hidden">👁</button>
+    <button id="btn-binoc">🔭</button>
+    <button id="btn-phone">📱</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>

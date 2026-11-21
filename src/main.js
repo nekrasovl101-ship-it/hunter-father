@@ -1,5 +1,7 @@
 import './style.css';
 import * as THREE from 'three';
+import { Post } from './world/post.js';
+import { Binoculars, Phone } from './ui/gadgets.js';
 import { PRESETS, loadSettings, saveSettings, isTouch } from './config/settings.js';
 import { VEHICLES } from './config/models.js';
 import { initTextures, loadSet } from './core/textures.js';
@@ -79,6 +81,7 @@ class Game {
     const keys = ['grass', 'meadow', 'forest', 'mud', 'rock', 'bark', 'moss', 'barkBroad', 'logs', 'roof', 'planks'];
     const loaded = await Promise.all(keys.map((k) => loadSet(k, {
       normal: nm && !['meadow', 'moss'].includes(k),
+      hd: preset.hdTextures,
       anisotropy: ['grass', 'meadow', 'forest', 'mud', 'rock'].includes(k) ? aniso : 2,
     })));
     const sets = Object.fromEntries(keys.map((k, i) => [k, loaded[i]]));
@@ -105,6 +108,9 @@ class Game {
     scene.add(this.buildings);
     this.towers = this.buildings.towers;
     this.impacts = new Impacts(scene);
+    // тёплый свет лампы в доме, где сейчас игрок (один источник на всю карту)
+    this.houseLight = new THREE.PointLight(0xffb060, 0, 10, 1.4);
+    scene.add(this.houseLight);
 
     onProgress(0.7, 'Животные и машины…');
     this.input = new Input(canvas, isTouch ? $('#touch') : null, settings);
@@ -129,7 +135,7 @@ class Game {
     }
 
     // машины у базы (в онлайне — общие для комнаты)
-    const list = this.net ? ROOM_VEHICLES : ROOM_VEHICLES.slice(0, 2);
+    const list = ROOM_VEHICLES;
     for (const rv of list) {
       const v = await Vehicle.create(rv.key, this.world, this.ground, rv.x, rv.z, rv.heading);
       v.netId = rv.id;
@@ -141,6 +147,8 @@ class Game {
     }
 
     this.hud = new Hud();
+    this.binoc = new Binoculars();
+    this.phone = new Phone();
     addEventListener('resize', () => this.resize());
     this.resize();
 
@@ -148,6 +156,8 @@ class Game {
     this.player.update(0, this.input, 0);
     this.trees.update(camera.position, true);
     this.rocks.update(camera.position, true);
+    if (preset.post) { this.post = new Post(renderer, scene, camera); renderer.info.autoReset = false; }
+    this.resize();
     renderer.compile(scene, camera);
     onProgress(1, 'Готово');
   }
@@ -156,6 +166,7 @@ class Game {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
+    this.post?.setSize(innerWidth, innerHeight);
   }
 
   start() {
@@ -223,6 +234,63 @@ class Game {
     } else if (res && res.wallDist < 450) {
       this.impacts.spawn(o.clone().addScaledVector(dir, res.wallDist - 0.05), 0x6b5a40, 12);
     }
+  }
+
+  // ---------- дома ----------
+  houseAt(x, z) {
+    for (const b of this.world.buildings) {
+      const rx = x - b.x, rz = z - b.z;
+      const c = Math.cos(b.rot), s = Math.sin(b.rot);
+      const lx = rx * c - rz * s, lz = rx * s + rz * c;
+      const L = b.layout;
+      if (Math.abs(lx) < L.w / 2 && Math.abs(lz) < L.d / 2 + 0.2) return b;
+    }
+    return null;
+  }
+
+  updateHouseLight(dt) {
+    const p = this.camera.position;
+    const b = !this.driving && this.houseAt(p.x, p.z);
+    const L = this.houseLight;
+    if (b && b !== this._house) {
+      const c = Math.cos(b.rot), s = Math.sin(b.rot);
+      const lx = 0.2, lz = 0.1, ly = b.h + b.layout.H - 0.6;
+      L.position.set(b.x + lx * c + lz * s, ly, b.z - lx * s + lz * c);
+    }
+    if (b) this._house = b;
+    const target = b ? (b.layout.isShed ? 3 : 9) : 0;
+    L.intensity += (target - L.intensity) * Math.min(1, dt * 4);
+  }
+
+  // ---------- бинокль и телефон ----------
+  animalList() { return this.sim ? this.sim.animals : [...this.netAnimals.values()]; }
+
+  rangefinder() {
+    const o = this.camera.position;
+    const dir = this.camera.getWorldDirection(this._rfDir || (this._rfDir = new THREE.Vector3()));
+    let dist = this.world.raycastStatic(o.x, o.y, o.z, dir.x, dir.y, dir.z, 900);
+    let label = '';
+    for (const a of this.animalList()) {
+      const ay = (a.y ?? this.ground.sample(a.x, a.z)) + 0.8;
+      const dx = a.x - o.x, dy = ay - o.y, dz = a.z - o.z;
+      const t = dx * dir.x + dy * dir.y + dz * dir.z;
+      if (t <= 0 || t > dist) continue;
+      const off = Math.hypot(dx - dir.x * t, dy - dir.y * t, dz - dir.z * t);
+      if (off < 1.2 + t * 0.004) { dist = t; label = (SPECIES[a.type]?.name || '') + (a.state === 'dead' ? ' (добыт)' : ''); }
+    }
+    return { dist, label };
+  }
+
+  phoneState() {
+    const p = this.player.pos;
+    return {
+      x: p.x, z: p.z, yaw: this.driving ? this.driving.heading + Math.PI : this.player.yaw,
+      hunters: this.hunters ? [...this.hunters.list.values()].filter((h) => h.target).map((h) => ({ x: h.x, z: h.z, nick: h.nick })) : [],
+      vehicles: this.vehicles.filter((v) => v !== this.driving).map((v) => ({ x: v.pos.x, z: v.pos.z })),
+      towers: this.towers,
+      animals: this.animalList().map((a) => ({ x: a.x, z: a.z, type: a.type, dead: a.state === 'dead' })),
+      kills: this.kills, score: this.score,
+    };
   }
 
   // ---------- машины и вышки ----------
@@ -425,7 +493,7 @@ class Game {
     const input = this.input;
     input.poll();
     if (input.consume('pause')) this.pause(!this.paused);
-    if (this.paused) { this.renderer.render(this.scene, this.camera); return; }
+    if (this.paused) { if (this.post) this.post.render(0); else this.renderer.render(this.scene, this.camera); return; }
 
     this.shared.uTime.value += dt;
     const t = this.shared.uTime.value;
@@ -436,7 +504,9 @@ class Game {
       this.buildings.setEvening(Math.max(0, (tod - 0.6) / 0.4));
     }
 
-    if (input.consume('use')) this.useAction();
+    if (input.consume('use')) { this.binoc.toggle(false); this.useAction(); }
+    if (input.consume('phone')) this.phone.toggle();
+    if (input.consume('binoc') && !this.driving) { this.binoc.toggle(); if (this.binoc.on) { input.aim = false; input.syncAimButton?.(); } }
     if (input.consume('debug')) this.views.debug = !this.views.debug;
     const p = this.player.pos;
 
@@ -453,10 +523,12 @@ class Game {
       if (this.sim && Math.abs(v.speed) > 3 && Math.random() < dt * 2) this.sim.noise(v.pos.x, v.pos.z, 0.35);
     } else {
       input.consume('view');
-      if (input.consume('fire') && this.player.health > 0) this.shoot();
+      if (input.aim && this.binoc.on) this.binoc.toggle(false);
+      if (input.consume('fire') && this.player.health > 0) { if (this.binoc.on) this.binoc.toggle(false); else this.shoot(); }
       if (input.consume('reload')) this.gun.reload();
       this.gun.update(dt, input.aim, this.player.speed);
-      this.player.update(dt, input, this.gun.aimT);
+      if (this.binoc.t > 0.6) this.gun.root.visible = false;
+      this.player.update(dt, input, this.gun.aimT, this.binoc.t);
     }
     const cp = this.camera.position;
     if (this.net) {
@@ -479,8 +551,11 @@ class Game {
     this.water.material.uniforms.uSunColor.value.copy(this.sky.sun.color);
     this.water.material.uniforms.uSkyColor.value.copy(this.sky.uniforms.uHorizon.value);
     this.impacts.update(dt);
+    this.binoc.update(dt, () => this.rangefinder());
+    this.updateHouseLight(dt);
+    this.phone.update(dt, this.phoneState());
 
-    this.renderer.render(this.scene, this.camera);
+    if (this.post) { this.renderer.info.reset(); this.post.render(dt); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
 
@@ -524,8 +599,18 @@ function setupMenu() {
   tod.value = settings.timeOfDay;
   $('#sens').value = settings.sensitivity;
   $('#controls-help').innerHTML = isTouch
-    ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок'
-    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка · Space — прыжок · F — машина/вышка · V — вид в машине · Esc — пауза';
+    ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок, 🔭 бинокль, 📱 телефон с картой'
+    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка · Space — прыжок · F — машина/вышка/дверь · V — вид в машине · B — бинокль · M — телефон (карта) · Esc — пауза';
+
+  // «Ультра» на телефоне — только после предупреждения
+  const warnUltra = (sel) => sel.addEventListener('change', () => {
+    if (sel.value !== 'ultra' || !isTouch) return;
+    $('#ultra-warn').classList.remove('hidden');
+    $('#ultra-cancel').onclick = () => { sel.value = 'medium'; $('#ultra-warn').classList.add('hidden'); sel.dispatchEvent(new Event('input')); };
+    $('#ultra-ok').onclick = () => $('#ultra-warn').classList.add('hidden');
+  });
+  warnUltra(quality);
+  warnUltra($('#quality-pause'));
 
   const save = () => {
     settings.nick = nick.value.trim().slice(0, 16);

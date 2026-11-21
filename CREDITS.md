@@ -20,7 +20,7 @@
 | `roof_planks_*` — кровля | https://polyhaven.com/a/roof_planks | Poly Haven | CC0 |
 | `wood_planks_*` — доски, двери, крыльцо | https://polyhaven.com/a/wood_planks | Poly Haven | CC0 |
 
-Скачаны через Poly Haven API (`api.polyhaven.com/files/<id>`, 1K JPG: Diffuse, nor_gl, Rough)
+Скачаны через Poly Haven API (`api.polyhaven.com/files/<id>`, 1K JPG: Diffuse, nor_gl, Rough) Для «Ультры» — 2K-версии тех же текстур Poly Haven в `public/textures/hd/` (`tools/fetch-hd-textures.sh`).
 и ambientCG (`Moss002_1K-JPG.zip`: Color, NormalGL, Roughness).
 
 ## 3D-модели (`public/models`)
