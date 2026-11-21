@@ -193,7 +193,7 @@ export class SkySystem {
     this.sun.intensity = si;
     this.hemi.color.copy(grey(C(a.hs, b.hs), overcast * 0.6));
     this.hemi.groundColor.copy(C(a.hg, b.hg));
-    this.hemi.intensity = (a.hi + (b.hi - a.hi) * k) * (1 + overcast * 0.35) * (this.ibl ? 0.85 : 1);
+    this.hemi.intensity = (a.hi + (b.hi - a.hi) * k) * (1 + overcast * 0.35) * (this.ibl ? 1.0 : 1);
     this.light = THREE.MathUtils.clamp(this.hemi.intensity * 0.9 + si * 0.22, 0.08, 1.15);
 
     this.scene.fog.color.copy(hor);

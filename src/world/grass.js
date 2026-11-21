@@ -143,9 +143,9 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         dry *= 1.0 - uSeason.z * 0.6;
         #ifdef FINE_GRASS
         // приглушённые природные цвета: тёмный низ, оливково-зелёные кончики, у части — соломенные
-        vec3 baseC = vec3(0.022, 0.036, 0.011);
-        vec3 tipLush = mix(vec3(0.1, 0.15, 0.04), vec3(0.15, 0.19, 0.06), color.b);
-        vec3 tipDry = mix(vec3(0.26, 0.22, 0.1), vec3(0.33, 0.28, 0.15), color.b);
+        vec3 baseC = vec3(0.04, 0.075, 0.018);
+        vec3 tipLush = mix(vec3(0.15, 0.27, 0.05), vec3(0.22, 0.33, 0.08), color.b);
+        vec3 tipDry = mix(vec3(0.3, 0.27, 0.11), vec3(0.36, 0.31, 0.16), color.b);
         #else
         vec3 baseC = vec3(0.025, 0.05, 0.012);
         vec3 tipLush = vec3(0.13, 0.22, 0.04);
