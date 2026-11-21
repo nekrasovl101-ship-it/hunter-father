@@ -29,14 +29,22 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 const KEY = 'hf_settings_v1';
 const defaults = {
   quality: isIOS ? 'medium' : 'high',
-  timeOfDay: 'day',      // day | sunset | cycle
+  timeOfDay: 'cycle',    // cycle | real | day | sunset | night
+  season: 'auto',        // auto (по месяцу) | summer | autumn | winter | spring
+  weather: 'auto',       // auto | clear | cloudy | rain | snow | fog
+  v: 2,
   sensitivity: 1,
   showFps: true,
   nick: '',
 };
 
 export function loadSettings() {
-  try { return { ...defaults, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
+    // v2: новая смена дня и ночи по умолчанию
+    if ((saved.v || 1) < 2) { saved.timeOfDay = 'cycle'; saved.v = 2; }
+    return { ...defaults, ...saved };
+  }
   catch { return { ...defaults }; }
 }
 export function saveSettings(s) {

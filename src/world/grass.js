@@ -82,6 +82,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
     uWorld: { value: WORLD_SIZE },
     uHalf: { value: HALF },
     uTime: shared.uTime,
+    uSeason: shared.uSeason,
   };
   const mat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
   mat.onBeforeCompile = (sh) => {
@@ -94,6 +95,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
         uniform vec2 uCenter;
         uniform vec3 uPlayer;
         uniform float uTile, uDist, uWorld, uHalf, uTime;
+        uniform vec4 uSeason;
         varying vec3 vGrassCol;`)
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
       .replace('#include <begin_vertex>', `
@@ -104,6 +106,9 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
         float fade = 1.0 - smoothstep(uDist * 0.55, uDist, d);
         float dens = ${flowers ? 'hs.g * (1.0 - hs.b) * smoothstep(0.35, 0.6, hs.a) * 0.5' : 'hs.g'};
         float sc = step(aOff.w, dens) * fade * (0.65 + 0.6 * fract(aOff.w * 7.31));
+        // зимой трава под снегом (торчат редкие сухие стебли), цветов нет; осенью цветов мало
+        sc *= ${flowers ? '(1.0 - uSeason.y) * (1.0 - uSeason.x * 0.85)' : '1.0 - uSeason.y * step(0.18, fract(aOff.w * 3.7))'};
+        sc *= 1.0 - uSeason.y * 0.35;
         float c = cos(aOff.z), s = sin(aOff.z);
         vec3 transformed = position;
         transformed.xz = mat2(c, -s, s, c) * transformed.xz;
@@ -124,11 +129,15 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
         transformed.y += hs.r - 0.03;
         // цвет: сочная зелень ↔ сухая трава, по тем же пятнам, что и земля
         float dry = smoothstep(0.45, 0.8, hs.a) * 0.75 + fract(aOff.w * 13.7) * 0.25;
+        dry = mix(dry, 0.75 + dry * 0.5, max(uSeason.x, uSeason.y));
+        dry *= 1.0 - uSeason.z * 0.6;
         vec3 baseC = vec3(0.025, 0.05, 0.012);
         vec3 tipLush = vec3(0.13, 0.22, 0.04);
         vec3 tipDry = vec3(0.30, 0.27, 0.10);
         vec3 tip = mix(tipLush, tipDry, dry * 0.8) * (0.8 + 0.4 * fract(aOff.w * 31.1));
         vGrassCol = mix(baseC, tip, smoothstep(0.0, 0.9, t)) * mix(1.0, 0.7, hs.b);
+        vGrassCol *= 1.0 - uSeason.w * 0.25;
+        vGrassCol = mix(vGrassCol, vec3(0.30, 0.25, 0.15) * (0.45 + 0.55 * t), uSeason.y);
         ${flowers ? `
         if (color.g > 1.5) {
           float k = fract(aOff.w * 97.3);

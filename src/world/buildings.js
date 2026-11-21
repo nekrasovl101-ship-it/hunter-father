@@ -300,5 +300,7 @@ export function createBuildings(world, preset, sets) {
   group.towers = towers;
   // окна светятся к вечеру
   group.setEvening = (k) => { mats.glass.emissiveIntensity = k * 1.6; };
+  // зимой на крышах снег
+  group.setSeason = (season) => { if (season === 'winter') { mats.roof.map = null; mats.roof.color.set(0xdfe6ee); mats.roof.needsUpdate = true; } };
   return group;
 }

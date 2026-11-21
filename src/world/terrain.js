@@ -28,6 +28,7 @@ export class Ground {
 
 const FRAG_PRELUDE = /* glsl */`
 uniform sampler2D tForestA, tMudA, tRockA, tMeadowA;
+uniform vec4 uSeason;
 uniform sampler2D tGrassR, tForestR, tMudR, tRockR;
 #ifdef USE_NORMALMAP
 uniform sampler2D tForestN, tMudN, tRockN;
@@ -67,17 +68,27 @@ vec4 lum = vec4(dot(colG, vec3(0.33)), dot(colF, vec3(0.33)), dot(colM, vec3(0.3
 vec4 sw = heightBlend(splatBase(), lum * 1.6);
 vec3 alb = colG * sw.x + colF * sw.y + colM * sw.z + colR * sw.w;
 alb *= 0.82 + 0.36 * macro;
+// времена года: осенью трава жухнет, весной сочнее, зимой — снег
+float gl = dot(colG, vec3(0.33));
+vec3 autumnG = mix(vec3(gl) * vec3(1.2, 0.92, 0.45), colF, 0.4);
+alb += sw.x * (autumnG - colG) * uSeason.x * 0.8;
+alb += sw.x * colG * vec3(-0.08, 0.14, -0.1) * uSeason.z;
+float sn = uSeason.y * smoothstep(0.25, 0.6, 1.0 - sw.w * 0.9 + (macro - 0.5) * 0.5) * (1.0 - sw.z * 0.6);
+alb = mix(alb, vec3(0.82, 0.85, 0.9) * (0.92 + 0.08 * lum.x), sn);
+// мокрая земля темнее
+alb *= 1.0 - uSeason.w * 0.32 * (1.0 - sn);
 diffuseColor.rgb *= alb;
 `;
 
 const ROUGH_FRAGMENT = /* glsl */`
 float roughnessFactor = roughness * (texture2D(tGrassR, uvG).g * sw.x + texture2D(tForestR, uvF).g * sw.y
   + texture2D(tMudR, uvM).g * sw.z + texture2D(tRockR, uvR).g * sw.w);
+roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.45, uSeason.w);
 `;
 
 const NORMAL_SAMPLE = `(texture2D(normalMap, uvG) * sw.x + texture2D(tForestN, uvF) * sw.y + texture2D(tMudN, uvM) * sw.z + texture2D(tRockN, uvR) * sw.w)`;
 
-export function createTerrain(preset, sets) {
+export function createTerrain(preset, sets, shared) {
   const seg = preset.terrainSeg;
   const ground = new Ground(seg);
   const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, seg, seg);
@@ -117,6 +128,7 @@ export function createTerrain(preset, sets) {
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, {
       tMeadowA: { value: sets.meadow.albedo },
+      uSeason: shared.uSeason,
       tForestA: { value: sets.forest.albedo }, tMudA: { value: sets.mud.albedo }, tRockA: { value: sets.rock.albedo },
       tGrassR: { value: sets.grass.rough }, tForestR: { value: sets.forest.rough },
       tMudR: { value: sets.mud.rough }, tRockR: { value: sets.rock.rough },

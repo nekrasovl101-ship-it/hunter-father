@@ -82,7 +82,7 @@ export class Post {
   }
 
   // sunDir — направление на солнце, sunColor — его цвет
-  render(dt, sunDir, sunColor) {
+  render(dt, sunDir, sunColor, k = 1) {
     this.grade.uniforms.uTime.value += dt;
     if (sunDir) {
       const cam = this.camera;
@@ -92,7 +92,7 @@ export class Post {
       u.uSun.value.set(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5);
       // сила лучей: солнце в кадре или рядом, сильнее у горизонта
       const onScreen = Math.max(0, 1 - Math.max(Math.abs(p.x), Math.abs(p.y)) / 1.6);
-      u.uStrength.value = facing > 0 ? onScreen * Math.min(1, facing * 2) * (1.2 - sunDir.y * 0.5) * 2.2 : 0;
+      u.uStrength.value = facing > 0 ? onScreen * Math.min(1, facing * 2) * (1.2 - sunDir.y * 0.5) * 2.2 * k : 0;
       if (sunColor) u.uTint.value.copy(sunColor);
     }
     this.composer.render(dt);

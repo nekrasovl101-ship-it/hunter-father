@@ -99,6 +99,21 @@ export class Sound {
   crash(k) { this._noise(0.5, { freq: 700, q: 0.5, gain: Math.min(1.2, 0.3 + k * 0.06), decay: 0.4 }); }
   bite() { this._noise(0.15, { freq: 1600, q: 2, type: 'bandpass', gain: 0.6, decay: 0.12 }); this._noise(0.3, { freq: 300, gain: 0.5, decay: 0.25, when: 0.03 }); }
 
+  // шум дождя: громкость 0..1
+  rain(level) {
+    const ctx = this.ctx;
+    if (!ctx || !this.noiseBuf) return;
+    if (!this._rain) {
+      const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
+      const g = ctx.createGain(); g.gain.value = 0;
+      src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(this.master); src.start();
+      this._rain = g;
+    }
+    this._rain.gain.setTargetAtTime(level * 0.22, ctx.currentTime, 0.5);
+  }
+
   _ambient() {
     const ctx = this.ctx;
     const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;

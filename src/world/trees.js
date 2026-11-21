@@ -191,13 +191,35 @@ function broadleaf(rnd) {
 }
 
 // ---------- материалы ----------
-function crownMaterial(map, shared, preset, flutter) {
+// Сезоны в кронах. Лиственные: осенью жёлто-оранжево-красные, зимой голые (редкие сухие листья),
+// весной светло-зелёные. Хвойные: зимой снег на верхних лапах.
+const BROAD_SEASON = /* glsl */`
+  {
+    float leafN = fract(sin(dot(floor(vViewPosition.xy * 3.0 + vHash * 50.0), vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 a1 = vec3(0.95, 0.62, 0.12), a2 = vec3(0.85, 0.28, 0.08), a3 = vec3(0.72, 0.62, 0.18);
+    vec3 autumn = vHash < 0.4 ? a1 : vHash < 0.7 ? a2 : a3;
+    float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)) * 3.0;
+    diffuseColor.rgb = mix(diffuseColor.rgb, autumn * l, uSeason.x * (0.75 + 0.25 * vHash));
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.95, 1.18, 0.75), uSeason.z);
+    if (uSeason.y > 0.5) {
+      if (fract(vHash * 13.1 + vTop * 7.0 + l * 3.0) > 0.12) discard;
+      diffuseColor.rgb = vec3(0.32, 0.22, 0.12) * l;
+    }
+  }
+`;
+const NEEDLE_SEASON = /* glsl */`
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.89, 0.94), uSeason.y * smoothstep(0.45, 0.85, vTop + fract(vHash * 7.3) * 0.2) * 0.75);
+`;
+
+function crownMaterial(map, shared, preset, flutter, broad = false) {
   const m = new THREE.MeshLambertMaterial({ map, alphaTest: 0.42, side: THREE.DoubleSide });
   m.alphaToCoverage = !!preset.antialias;
+  m.customProgramCacheKey = () => 'crown' + broad;
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = shared.uTime;
+    sh.uniforms.uSeason = shared.uSeason;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying float vAO;\nvarying vec3 vTint;')
+      .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying float vAO;\nvarying vec3 vTint;\nvarying float vHash;\nvarying float vTop;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         #ifdef USE_INSTANCING
         vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
@@ -213,12 +235,13 @@ function crownMaterial(map, shared, preset, flutter) {
         vAO = clamp(0.42 + length(position.xz) * 0.22 + position.y * 0.025, 0.42, 1.0);
         // у каждого дерева свой оттенок
         float hsh = fract(sin(ip.x * 12.9898 + ip.z * 78.233) * 43758.5453);
-        vTint = mix(vec3(0.82, 0.93, 0.78), vec3(1.12, 1.06, 0.86), hsh);`)
+        vTint = mix(vec3(0.82, 0.93, 0.78), vec3(1.12, 1.06, 0.86), hsh) * 0.85;
+        vHash = hsh; vTop = clamp(position.y * 0.08 + length(position.xz) * 0.15, 0.0, 1.0);`)
       // свет одинаковый с обеих сторон карточки + лёгкая «просвечиваемость»
       .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vAO;\nvarying vec3 vTint;')
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vTint * vAO;')
+      .replace('#include <common>', '#include <common>\nvarying float vAO;\nvarying vec3 vTint;\nvarying float vHash;\nvarying float vTop;\nuniform vec4 uSeason;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vTint * vAO;\n' + (broad ? BROAD_SEASON : NEEDLE_SEASON))
       .replace('#include <normal_fragment_begin>', 'float faceDirection = 1.0;\nvec3 normal = normalize(vNormal);\nvec3 nonPerturbedNormal = normal;')
       // просвет листвы против солнца
       .replace('#include <opaque_fragment>', `
@@ -284,7 +307,7 @@ export async function createTrees(world, preset, barkSet, barkBroadSet, shared, 
   const barkMats = [barkSet, barkBroadSet].map((b) => new THREE.MeshStandardMaterial({
     map: b.albedo, normalMap: preset.normalMaps ? b.normal : null, roughnessMap: b.rough, roughness: 1, metalness: 0,
   }));
-  const crownMats = [crownMaterial(needles, shared, preset, 0.01), crownMaterial(leaves, shared, preset, 0.03)];
+  const crownMats = [crownMaterial(needles, shared, preset, 0.01), crownMaterial(leaves, shared, preset, 0.03, true)];
   crownMats[1].color.set(0x7d8a62); // листва темнее и менее жёлтая
 
   const group = new THREE.Group();

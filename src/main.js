@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { Post } from './world/post.js';
 import { Binoculars, Phone } from './ui/gadgets.js';
+import { Environment, Precipitation, seasonFor, seasonVector, SEASONS, WEATHER_NAMES } from './world/environment.js';
 import { PRESETS, loadSettings, saveSettings, isTouch } from './config/settings.js';
 import { VEHICLES } from './config/models.js';
 import { initTextures, loadSet } from './core/textures.js';
@@ -46,7 +47,7 @@ class Game {
     this.running = false;
     this.paused = false;
     this.clock = new THREE.Clock();
-    this.shared = { uTime: { value: 0 } };
+    this.shared = { uTime: { value: 0 }, uSeason: { value: new THREE.Vector4() } };
     this.vehicles = [];
     this.driving = null;
     this.damageT = 0;
@@ -54,6 +55,9 @@ class Game {
 
   async init(onProgress) {
     const preset = (this.preset = PRESETS[settings.quality] || PRESETS.medium);
+    this.season = seasonFor(settings.season);
+    this.shared.uSeason.value.copy(seasonVector(this.season));
+    this.env = new Environment(settings, this.season, this.shared);
     const canvas = $('#game');
     // если видеокарта занята (много вкладок с 3D) — пробуем ещё раз с щадящими настройками
     let renderer;
@@ -89,7 +93,7 @@ class Game {
     onProgress(0.35, 'Генерация леса…');
     await new Promise((r) => setTimeout(r, 0));
     this.world = new World();
-    const terrain = createTerrain(preset, sets);
+    const terrain = createTerrain(preset, sets, this.shared);
     this.ground = terrain.ground;
     scene.add(terrain.mesh, terrain.far);
     this.water = createWater(terrain.heightTex, preset);
@@ -107,7 +111,9 @@ class Game {
     this.buildings = createBuildings(this.world, preset, sets);
     scene.add(this.buildings);
     this.towers = this.buildings.towers;
+    this.buildings.setSeason(this.season);
     this.impacts = new Impacts(scene);
+    this.precip = new Precipitation(scene, preset);
     // тёплый свет лампы в доме, где сейчас игрок (один источник на всю карту)
     this.houseLight = new THREE.PointLight(0xffb060, 0, 10, 1.4);
     scene.add(this.houseLight);
@@ -556,13 +562,17 @@ class Game {
 
     this.shared.uTime.value += dt;
     const t = this.shared.uTime.value;
-    const tod = settings.timeOfDay === 'sunset' ? 0.92 : settings.timeOfDay === 'cycle' ? 0.5 - 0.5 * Math.cos((t / 300) * Math.PI * 2) : 0;
-    if (Math.abs(tod - this.sky.t) > 0.002) {
-      this.sky.set(tod);
-      this.trees.setLight(1 - tod * 0.3);
-      this.buildings.setEvening(Math.max(0, (tod - 0.6) / 0.4));
+    // время суток, погода, сезон
+    this.env.update(dt);
+    const env = this.env;
+    if (Math.abs(env.hours - this.sky.hours) > 0.01 || !this._wx || Object.keys(env.weather).some((k) => Math.abs(env.weather[k] - this._wx[k]) > 0.004)) {
+      this._wx = { ...env.weather };
+      this.sky.set(env.hours, env.weather);
+      this.trees.setLight(this.sky.light);
+      this.buildings.setEvening(Math.max(this.sky.night, env.weather.cloud * 0.3 * (1 - this.sky.light)));
     }
-
+    this.precip.update(dt, this.camera.position, env.weather, this.sky.hemi.color);
+    this.sound.rain(this.paused ? 0 : env.weather.rain);
     if (input.consume('use')) { this.select('rifle'); this.useAction(); }
     this.handleInventory(input);
     if (input.consume('debug')) this.views.debug = !this.views.debug;
@@ -616,7 +626,7 @@ class Game {
     if (this.water.mirror && riverDist(cp.x, cp.z) < this.preset.viewDist) {
       this.water.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root]);
     }
-    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunDir, this.sky.sun.color); } else this.renderer.render(this.scene, this.camera);
+    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night)); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
 
@@ -677,6 +687,19 @@ function setupMenu() {
   });
   warnUltra(quality);
   warnUltra($('#quality-pause'));
+
+  // время года и погода (в меню и на паузе — одинаковые списки)
+  for (const sel of document.querySelectorAll('.season-sel')) {
+    sel.add(new Option(`По месяцу (сейчас: ${SEASONS[seasonFor('auto')]})`, 'auto'));
+    for (const [k, v] of Object.entries(SEASONS)) sel.add(new Option(v, k));
+    sel.value = settings.season || 'auto';
+    sel.addEventListener('change', () => { settings.season = sel.value; saveSettings(settings); for (const o of document.querySelectorAll('.season-sel')) o.value = sel.value; });
+  }
+  for (const sel of document.querySelectorAll('.weather-sel')) {
+    for (const [k, v] of Object.entries(WEATHER_NAMES)) sel.add(new Option(v, k));
+    sel.value = settings.weather || 'auto';
+    sel.addEventListener('change', () => { settings.weather = sel.value; saveSettings(settings); for (const o of document.querySelectorAll('.weather-sel')) o.value = sel.value; });
+  }
 
   const save = () => {
     settings.nick = nick.value.trim().slice(0, 16);
