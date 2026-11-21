@@ -1,0 +1,25 @@
+{
+  "name": "hunter-father",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "dev": "vite --host",
+    "server": "npm --prefix server run dev",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "deploy:server": "npm --prefix server run deploy",
+    "deploy:client": "vite build && ./server/node_modules/.bin/wrangler deploy -c hosting/wrangler.jsonc"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.70.1",
+    "vite": "^6.1.0",
+    "wrangler": "^4.166.0"
+  },
+  "private": true
+}

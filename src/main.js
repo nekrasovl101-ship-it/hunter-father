@@ -1,0 +1,632 @@
+import './style.css';
+import * as THREE from 'three';
+import { PRESETS, loadSettings, saveSettings, isTouch } from './config/settings.js';
+import { VEHICLES } from './config/models.js';
+import { initTextures, loadSet } from './core/textures.js';
+import { Input } from './core/input.js';
+import { Sound } from './core/audio.js';
+import { createTerrain } from './world/terrain.js';
+import { createWater } from './world/water.js';
+import { createGrass } from './world/grass.js';
+import { createRocks } from './world/vegetation.js';
+import { createTrees } from './world/trees.js';
+import { createBuildings, TOWER_H } from './world/buildings.js';
+import { SkySystem } from './world/sky.js';
+import { Impacts } from './world/effects.js';
+import { Player } from './player/player.js';
+import { Rifle } from './player/gun.js';
+import { Vehicle, VehicleCamera } from './vehicles/vehicle.js';
+import { AnimalViews } from './entities/animals.js';
+import { Hud } from './ui/hud.js';
+import { World } from '../shared/world.js';
+import { AnimalSim, SPECIES, isBlocked } from '../shared/animals.js';
+import { SITES } from '../shared/terrain.js';
+import { Net, createRoom, leaderboard } from './net/net.js';
+import { RemoteHunters } from './entities/hunters.js';
+import { ROOM_VEHICLES, SPECIES_IDS, ANIMS, SEND_MS, CODE_LEN, MAX_PLAYERS } from '../shared/protocol.js';
+
+const $ = (s) => document.querySelector(s);
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const settings = loadSettings();
+
+class Game {
+  constructor(net = null, welcome = null) {
+    this.net = net;            // null — одиночная игра
+    this.welcome = welcome;
+    this.netAnimals = new Map();
+    this.snap = null;
+    this.sendT = 0;
+    this.roster = new Map();   // id -> ник
+    this.scores = { list: [], best: [] };
+    this.sound = new Sound();
+    this.score = 0;
+    this.kills = 0;
+    this.running = false;
+    this.paused = false;
+    this.clock = new THREE.Clock();
+    this.shared = { uTime: { value: 0 } };
+    this.vehicles = [];
+    this.driving = null;
+    this.damageT = 0;
+  }
+
+  async init(onProgress) {
+    const preset = (this.preset = PRESETS[settings.quality] || PRESETS.medium);
+    const canvas = $('#game');
+    const renderer = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.antialias, powerPreference: 'high-performance' }));
+    renderer.setPixelRatio(Math.min(devicePixelRatio, preset.pixelRatio));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = preset.shadows;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+
+    const scene = (this.scene = new THREE.Scene());
+    const camera = (this.camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 1500));
+    scene.add(camera);
+
+    onProgress(0.05, 'Текстуры…');
+    await initTextures(renderer);
+    const aniso = Math.min(renderer.capabilities.getMaxAnisotropy(), preset.antialias ? 8 : 4);
+    const nm = preset.normalMaps;
+    const keys = ['grass', 'meadow', 'forest', 'mud', 'rock', 'bark', 'moss', 'barkBroad', 'logs', 'roof', 'planks'];
+    const loaded = await Promise.all(keys.map((k) => loadSet(k, {
+      normal: nm && !['meadow', 'moss'].includes(k),
+      anisotropy: ['grass', 'meadow', 'forest', 'mud', 'rock'].includes(k) ? aniso : 2,
+    })));
+    const sets = Object.fromEntries(keys.map((k, i) => [k, loaded[i]]));
+
+    onProgress(0.35, 'Генерация леса…');
+    await new Promise((r) => setTimeout(r, 0));
+    this.world = new World();
+    const terrain = createTerrain(preset, sets);
+    this.ground = terrain.ground;
+    scene.add(terrain.mesh, terrain.far);
+    this.water = createWater();
+    scene.add(this.water);
+    this.grass = createGrass(preset, terrain.heightTex, this.shared);
+    scene.add(this.grass);
+    this.sky = new SkySystem(scene, preset);
+    terrain.far.material = this.sky.farMaterial(preset.viewDist);
+    onProgress(0.5, 'Деревья…');
+    this.trees = await createTrees(this.world, preset, sets.bark, sets.barkBroad, this.shared, renderer);
+    scene.add(this.trees);
+    this.rocks = createRocks(this.world, preset, sets.rock, sets.moss);
+    scene.add(this.rocks);
+    onProgress(0.6, 'Избушки…');
+    this.buildings = createBuildings(this.world, preset, sets);
+    scene.add(this.buildings);
+    this.towers = this.buildings.towers;
+    this.impacts = new Impacts(scene);
+
+    onProgress(0.7, 'Животные и машины…');
+    this.input = new Input(canvas, isTouch ? $('#touch') : null, settings);
+    this.input.onLockChange = (locked) => { if (!locked && this.running && !isTouch) this.pause(true); };
+    addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.input.dragLook && this.running) this.pause(!this.paused); });
+    this.player = new Player(camera, this.ground, this.world, this.sound);
+    this.gun = new Rifle(camera, this.sound);
+    this.vcam = new VehicleCamera(camera);
+    this.views = new AnimalViews(scene, this.ground, preset);
+    await this.views.preload(Object.keys(SPECIES));
+    if (this.net) {
+      // онлайн: животными управляет сервер
+      this.sim = null;
+      this.hunters = new RemoteHunters(scene, this.ground, preset);
+      for (const p of this.welcome.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick); }
+      this._bindNet();
+    } else {
+      this.sim = new AnimalSim(this.world, (Math.random() * 1e9) | 0);
+      // стадо оленей впереди — чтобы сразу было на кого охотиться
+      this.sim.spawnGroup('deer', 0, -70);
+      this.sim.populate([{ x: 0, z: 0 }]);
+    }
+
+    // машины у базы (в онлайне — общие для комнаты)
+    const list = this.net ? ROOM_VEHICLES : ROOM_VEHICLES.slice(0, 2);
+    for (const rv of list) {
+      const v = await Vehicle.create(rv.key, this.world, this.ground, rv.x, rv.z, rv.heading);
+      v.netId = rv.id;
+      v.remoteDriver = this.net ? (this.welcome.vehicles.find((q) => q.id === rv.id)?.driver || 0) : 0;
+      v.onCrash = (k) => { if (k > 3) this.sound.crash(k); };
+      v.onLand = (k) => this.sound.crash(k * 0.3);
+      this.vehicles.push(v);
+      scene.add(v.root);
+    }
+
+    this.hud = new Hud();
+    addEventListener('resize', () => this.resize());
+    this.resize();
+
+    // прогрев шейдеров, чтобы не было фризов при первом кадре
+    this.player.update(0, this.input, 0);
+    this.trees.update(camera.position, true);
+    this.rocks.update(camera.position, true);
+    renderer.compile(scene, camera);
+    onProgress(1, 'Готово');
+  }
+
+  resize() {
+    this.camera.aspect = innerWidth / innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(innerWidth, innerHeight);
+  }
+
+  start() {
+    this.running = true;
+    this.hud.show(true);
+    if (this.net) {
+      $('#room-tag').classList.remove('hidden');
+      $('#btn-board').classList.remove('hidden');
+      this.renderBoard();
+    }
+    addEventListener('keydown', (e) => { if (e.code === 'Tab' && this.net) { e.preventDefault(); $('#board').classList.toggle('hidden'); } });
+    $('#touch').classList.toggle('hidden', !isTouch);
+    this.clock.start();
+    this.renderer.setAnimationLoop(() => this.frame());
+    this.input.enabled = true;
+    this.input.requestLock();
+  }
+
+  pause(v) {
+    this.paused = v;
+    $('#pause').classList.toggle('hidden', !v);
+    if (!v) this.input.requestLock();
+  }
+
+  shoot() {
+    if (!this.gun.fire()) return;
+    const cam = this.camera;
+    const dir = new THREE.Vector3();
+    cam.getWorldDirection(dir);
+    // разброс: от бедра большой, в оптику — почти нулевой
+    const spread = THREE.MathUtils.lerp(0.035 + Math.min(this.player.speed, 7) * 0.006, 0.0015, this.gun.aimT);
+    dir.x += (Math.random() - 0.5) * spread * 2;
+    dir.y += (Math.random() - 0.5) * spread * 2;
+    dir.z += (Math.random() - 0.5) * spread * 2;
+    dir.normalize();
+    const o = cam.position;
+    this.player.addRecoil(0.03 + 0.03 * (1 - this.gun.aimT));
+    if (this.net) {
+      // онлайн: попадание считает сервер (с поправкой на задержку)
+      this._lastShot = { o: o.clone(), dir: dir.clone() };
+      this.net.send({ t: 'shot', o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], lag: Math.round(this.net.rtt / 2 + 90) });
+      return;
+    }
+    const res = this.sim.shoot(o.x, o.y, o.z, dir.x, dir.y, dir.z, 450, 'me');
+    this.sim.noise(o.x, o.z, 1);
+    this.showShotResult(res, o, dir);
+  }
+
+  showShotResult(res, o, dir) {
+    if (res && res.animal) {
+      const hp = o.clone().addScaledVector(dir, res.dist);
+      this.impacts.spawn(hp, 0x7a1010, 10);
+      this.sound.hit();
+      this.hud.hitMarker(res.killed);
+      const sp = SPECIES[res.animal.type];
+      if (res.killed) {
+        if (!this.net) { this.kills++; this.score += res.score; } // в онлайне счёт присылает сервер
+        const part = { head: ' · в голову!', vitals: ' · в сердце', neck: ' · в шею' }[res.part] || '';
+        this.hud.message(`${sp.name}: добыча! <b>+${res.score}</b>${part} · ${Math.round(res.dist)} м`, 'good');
+      } else if (sp.aggressive) {
+        this.hud.message(`${sp.name} ранен и бросается на вас!`, 'warn');
+      } else {
+        this.hud.message('Ранен — зверь убегает', 'warn');
+      }
+    } else if (res && res.wallDist < 450) {
+      this.impacts.spawn(o.clone().addScaledVector(dir, res.wallDist - 0.05), 0x6b5a40, 12);
+    }
+  }
+
+  // ---------- машины и вышки ----------
+  nearestVehicle() {
+    let best = null, bd = 4.2;
+    for (const v of this.vehicles) {
+      const d = Math.hypot(v.pos.x - this.player.pos.x, v.pos.z - this.player.pos.z);
+      if (d < bd) { bd = d; best = v; }
+    }
+    return best;
+  }
+  nearestTower() {
+    for (const t of this.towers) {
+      const d = Math.hypot(t.x - this.player.pos.x, t.z - this.player.pos.z);
+      if (this.player.platform === t.platform && this.player.platform) return t;
+      if (d < 2.8) return t;
+    }
+    return null;
+  }
+
+  requestVehicle(v) {
+    if (!this.net) { this.enterVehicle(v); return; }
+    if (v.remoteDriver) { this.hud.message('Машина занята'); return; }
+    this.net.send({ t: 'enter', id: v.netId });
+  }
+
+  enterVehicle(v) {
+    this.driving = v;
+    v.driver = 'me';
+    this.gun.root.visible = false;
+    this.input.aim = false;
+    this.vcam.reset(v);
+    this.vcam.firstPerson = false;
+    this.sound.engineStart();
+    document.body.classList.add('driving');
+    this.hud.message(`${v.cfg.name}: W/S — газ/тормоз, A/D — руль, Space — ручник, V — камера, F — выйти`);
+  }
+  exitVehicle() {
+    const v = this.driving;
+    if (Math.abs(v.speed) > 4) { this.hud.message('Сначала остановитесь'); return; }
+    const p = v.exitPoint();
+    this.player.pos.set(p.x, this.ground.sample(p.x, p.z), p.z);
+    this.player.vel.set(0, 0, 0);
+    this.player.yaw = v.heading + Math.PI;
+    this.player.pitch = 0;
+    v.driver = null;
+    v.speed = 0;
+    this.driving = null;
+    if (this.net) { this.net.send({ t: 'exit', id: v.netId }); v.remoteDriver = 0; }
+    this.sound.engineStop();
+    document.body.classList.remove('driving');
+    this.camera.fov = this.player.baseFov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  useAction() {
+    if (this.driving) { this.exitVehicle(); return; }
+    if (this.player.platform) {
+      // спуск с вышки
+      const t = this.towers.find((q) => q.platform === this.player.platform);
+      this.player.platform = null;
+      const ox = Math.sin(t.rot) * 2.4, oz = Math.cos(t.rot) * 2.4;
+      this.player.pos.set(t.x + ox, this.ground.sample(t.x + ox, t.z + oz), t.z + oz);
+      return;
+    }
+    const v = this.nearestVehicle();
+    if (v) { this.requestVehicle(v); return; }
+    const t = this.nearestTower();
+    if (t) {
+      t.platform ||= { x: t.x, z: t.z, y: t.y - 0.1 + TOWER_H + 0.06, r: 0.85 };
+      this.player.platform = t.platform;
+      this.player.pos.set(t.x, t.platform.y, t.z);
+      this.player.vel.set(0, 0, 0);
+      this.hud.message('Вы на вышке. F — спуститься');
+    }
+  }
+
+  // ---------- онлайн ----------
+  _bindNet() {
+    const net = this.net;
+    net.on('snap', (m) => { this.snap = m; })
+      .on('join', (m) => { this.roster.set(m.id, m.nick); this.hunters.add(m.id, m.nick); this.hud?.message(`${m.nick} присоединился к охоте`); })
+      .on('leave', (m) => { this.hud?.message(`${this.roster.get(m.id) || 'Охотник'} ушёл`); this.roster.delete(m.id); this.hunters.remove(m.id); })
+      .on('scores', (m) => { this.scores = m; const me = m.list.find((q) => q.id === net.id); if (me) { this.score = me.score; this.kills = me.kills; } this.renderBoard(); })
+      .on('dmg', (m) => this.damage(m.dmg, m.species))
+      .on('hit', (m) => {
+        const s = this._lastShot;
+        if (!s) return;
+        const res = m.aid ? { animal: { type: m.species }, part: m.part, dist: m.dist, killed: m.killed, score: m.score } : { wallDist: m.wall < 0 ? Infinity : m.wall };
+        this.showShotResult(res, s.o, s.dir, true);
+      })
+      .on('kill', (m) => { if (m.by !== net.id) this.hud.message(`${m.nick}: ${SPECIES[m.species].name.toLowerCase()} — добыча! +${m.score}`); })
+      .on('shot', (m) => {
+        // чужой выстрел: звук с учётом расстояния + анимация стрелка
+        const d = Math.hypot(m.o[0] - this.camera.position.x, m.o[2] - this.camera.position.z);
+        this.sound.shot(d);
+        this.hunters.shotFrom(m.id);
+      })
+      .on('enter', (m) => {
+        const v = this.vehicles.find((q) => q.netId === m.id);
+        if (!v) return;
+        v.remoteDriver = m.by;
+        if (m.by === net.id) this.enterVehicle(v);
+      })
+      .on('exit', (m) => { const v = this.vehicles.find((q) => q.netId === m.id); if (v && m.by !== net.id) v.remoteDriver = 0; })
+      .on('deny', () => this.hud.message('Машина занята'))
+      .on('close', (reason) => {
+        this.hud.message(`Связь потеряна: ${reason}. Переподключаемся…`, 'warn');
+        $('#room-tag').textContent = 'нет связи — переподключение…';
+        this._reconnect(0);
+      });
+  }
+
+  // Автопереподключение к той же комнате (сервер перезапустился, пропал Wi-Fi и т. п.)
+  async _reconnect(attempt) {
+    if (attempt > 15) { this.hud.message('Не удалось переподключиться. Вернитесь в меню.', 'warn'); return; }
+    await new Promise((r) => setTimeout(r, Math.min(5000, 1000 + attempt * 500)));
+    try {
+      const w = await this.net.connect(this.net.code, settings.nick);
+      if (this.driving) { this.driving.driver = null; this.driving.speed = 0; this.driving = null; this.sound.engineStop(); document.body.classList.remove('driving'); }
+      for (const id of [...this.hunters.list.keys()]) this.hunters.remove(id);
+      this.roster.clear();
+      for (const p of w.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick); }
+      this._tag = '';
+      this.hud.message('Связь восстановлена');
+    } catch (e) {
+      if (/не найдена|заполнена/.test(e.message)) { this.hud.message(e.message, 'warn'); return; }
+      this._reconnect(attempt + 1);
+    }
+  }
+
+  netFrame(dt) {
+    const net = this.net, p = this.player.pos;
+    // своё состояние — 10 раз в секунду
+    this.sendT -= dt * 1000;
+    if (this.sendT <= 0) {
+      this.sendT = SEND_MS;
+      const msg = {
+        t: 'st', p: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)], yaw: +this.player.yaw.toFixed(2), pitch: +this.player.pitch.toFixed(2),
+        sp: +this.player.speed.toFixed(1), a: this.player.health > 0 ? 1 : 0, ai: this.gun.aimT > 0.5 ? 1 : 0, g: +this.ground.sample(p.x, p.z).toFixed(1),
+      };
+      if (this.driving) msg.vs = this.driving.netState();
+      net.send(msg);
+    }
+    const snap = this.snap;
+    if (snap) {
+      // животные из снимка сервера
+      const seen = new Set();
+      for (const [id, ti, x, z, h, ai, sp] of snap.a) {
+        let a = this.netAnimals.get(id);
+        if (!a) { a = { id }; this.netAnimals.set(id, a); }
+        a.type = SPECIES_IDS[ti]; a.x = x; a.z = z; a.heading = h; a.anim = ANIMS[ai]; a.speed = sp;
+        a.state = a.anim === 'death' ? 'dead' : 'alive';
+        seen.add(id);
+      }
+      for (const id of this.netAnimals.keys()) if (!seen.has(id)) this.netAnimals.delete(id);
+      // машины, которыми управляют другие
+      for (const vs of snap.v) {
+        const v = this.vehicles.find((q) => q.netId === vs[0]);
+        if (!v || v === this.driving) continue;
+        v.remoteDriver = vs[9];
+        if (vs[9] && vs[9] !== net.id) v.applyRemote(dt, vs.slice(1, 9));
+        else if (!vs[9] && (Math.abs(v.pos.x - vs[1]) > 0.5 || Math.abs(v.pos.z - vs[3]) > 0.5)) v.applyRemote(dt, [...vs.slice(1, 7), 0, 0]);
+        else v.update(dt, null);
+      }
+      this.hunters.sync(snap.p, net.id, dt, this.camera.position);
+    }
+    this.views.sync([...this.netAnimals.values()], dt, this.camera);
+  }
+
+  renderBoard() {
+    const el = $('#board-list');
+    if (!el) return;
+    const rows = this.scores.list.map((q, i) => `<tr class="${q.id === this.net?.id ? 'me' : ''}"><td>${i + 1}</td><td>${esc(q.nick)}</td><td>${q.kills}</td><td>${q.score}</td></tr>`).join('');
+    const best = this.scores.best.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(q.nick)}</td><td>${q.kills}</td><td>${q.score}</td></tr>`).join('');
+    el.innerHTML = `<h3>Охотники в комнате</h3><table><tr><th>#</th><th>Ник</th><th>Добыча</th><th>Очки</th></tr>${rows}</table>`
+      + (best ? `<h3>Рекорды комнаты</h3><table><tr><th>#</th><th>Ник</th><th>Добыча</th><th>Очки</th></tr>${best}</table>` : '');
+  }
+
+  damage(dmg, species) {
+    if (this.player.health <= 0) return;
+    this.player.health = Math.max(0, this.player.health - dmg);
+    this.damageT = 0.35;
+    this.sound.bite();
+    this.player.addRecoil(-0.03);
+    if (this.player.health <= 0) {
+      this.hud.message(`Вас загрыз${species === 'boar' ? ' кабан' : 'ли волки'}… Возвращение на базу`, 'warn');
+      this.score = Math.max(0, this.score - 100);
+      setTimeout(() => {
+        this.player.health = 100;
+        this.player.platform = null;
+        this.player.pos.set(0, this.ground.sample(0, 0), 0);
+        this.player.vel.set(0, 0, 0);
+      }, 1500);
+    }
+  }
+
+  frame() {
+    const dt = Math.min(0.05, this.clock.getDelta());
+    const input = this.input;
+    input.poll();
+    if (input.consume('pause')) this.pause(!this.paused);
+    if (this.paused) { this.renderer.render(this.scene, this.camera); return; }
+
+    this.shared.uTime.value += dt;
+    const t = this.shared.uTime.value;
+    const tod = settings.timeOfDay === 'sunset' ? 0.92 : settings.timeOfDay === 'cycle' ? 0.5 - 0.5 * Math.cos((t / 300) * Math.PI * 2) : 0;
+    if (Math.abs(tod - this.sky.t) > 0.002) {
+      this.sky.set(tod);
+      this.trees.setLight(1 - tod * 0.3);
+      this.buildings.setEvening(Math.max(0, (tod - 0.6) / 0.4));
+    }
+
+    if (input.consume('use')) this.useAction();
+    if (input.consume('debug')) this.views.debug = !this.views.debug;
+    const p = this.player.pos;
+
+    if (this.driving) {
+      const v = this.driving;
+      input.consume('fire'); input.consume('reload'); input.consume('jump');
+      if (input.consume('view')) this.vcam.firstPerson = !this.vcam.firstPerson;
+      v.update(dt, { throttle: input.move.y, steer: input.move.x, handbrake: input.jumpHeld });
+      p.set(v.pos.x, v.pos.y, v.pos.z);
+      this.player.speed = Math.abs(v.speed);
+      this.vcam.update(dt, v, input.takeLook());
+      this.sound.engineUpdate(v.rpm, v.throttle);
+      // двигатель распугивает зверей
+      if (this.sim && Math.abs(v.speed) > 3 && Math.random() < dt * 2) this.sim.noise(v.pos.x, v.pos.z, 0.35);
+    } else {
+      input.consume('view');
+      if (input.consume('fire') && this.player.health > 0) this.shoot();
+      if (input.consume('reload')) this.gun.reload();
+      this.gun.update(dt, input.aim, this.player.speed);
+      this.player.update(dt, input, this.gun.aimT);
+    }
+    const cp = this.camera.position;
+    if (this.net) {
+      this.netFrame(dt);
+    } else {
+      // стоящие машины тоже обновляются (катятся с горки, оседают)
+      for (const v of this.vehicles) if (v !== this.driving) v.update(dt, null);
+      this.sim.update(dt, [{ id: 'me', x: p.x, y: p.y, z: p.z, speed: this.player.speed, inVehicle: !!this.driving || !!this.player.platform, alive: this.player.health > 0 }]);
+      for (const e of this.sim.events) if (e.type === 'attack' && e.target === 'me') this.damage(e.dmg, e.species);
+      this.sim.events.length = 0;
+      this.views.sync(this.sim.animals, dt, this.camera);
+    }
+
+    this.grass.update(cp, p);
+    this.trees.update(cp);
+    this.rocks.update(cp);
+    this.sky.update(cp, t);
+    this.water.material.uniforms.uTime.value = t;
+    this.water.material.uniforms.uSunDir.value.copy(this.sky.sunDir);
+    this.water.material.uniforms.uSunColor.value.copy(this.sky.sun.color);
+    this.water.material.uniforms.uSkyColor.value.copy(this.sky.uniforms.uHorizon.value);
+    this.impacts.update(dt);
+
+    this.renderer.render(this.scene, this.camera);
+    this.updateHud(dt);
+  }
+
+  updateHud(dt) {
+    const hud = this.hud;
+    hud.update(dt, { gun: this.gun, yaw: this.driving ? this.driving.heading + Math.PI : this.player.yaw, score: this.score, kills: this.kills, showFps: settings.showFps });
+    if (settings.showFps) hud.fps.textContent = hud.fps.textContent.replace(/ ·.*$/, '') + ` · ${this.renderer.info.render.calls} dc`;
+    $('#health-bar').style.width = `${this.player.health}%`;
+    if (this.net) {
+      const tag = `Комната <b>${this.net.code}</b> · ${this.roster.size}/${MAX_PLAYERS} · ${Math.round(this.net.rtt)} мс`;
+      if (tag !== this._tag) { $('#room-tag').innerHTML = tag; this._tag = tag; }
+    }
+    this.damageT -= dt;
+    $('#damage').classList.toggle('on', this.damageT > 0);
+    // подсказки
+    let prompt = '', useBtn = false;
+    const key = isTouch ? '🚙' : 'F';
+    if (this.driving) { useBtn = true; }
+    else if (this.player.platform) { prompt = `<b>${key}</b> — спуститься с вышки`; useBtn = true; }
+    else {
+      const v = this.nearestVehicle();
+      const tw = !v && this.nearestTower();
+      if (v) { prompt = `<b>${key}</b> — сесть: ${v.cfg.name}`; useBtn = true; }
+      else if (tw) { prompt = `<b>${key}</b> — подняться на вышку`; useBtn = true; }
+    }
+    if (prompt !== this._prompt) { $('#prompt').innerHTML = prompt; this._prompt = prompt; }
+    if (isTouch) {
+      $('#btn-use').classList.toggle('hidden', !useBtn);
+      $('#btn-view').classList.toggle('hidden', !this.driving);
+    }
+    const speed = this.driving ? `${Math.round(Math.abs(this.driving.speed) * 3.6)}<small>км/ч</small>` : '';
+    if (speed !== this._speed) { $('#speedo').innerHTML = speed; this._speed = speed; }
+  }
+}
+
+// ---------- меню ----------
+function setupMenu() {
+  const nick = $('#nick'), quality = $('#quality'), tod = $('#tod');
+  nick.value = settings.nick;
+  for (const [k, p] of Object.entries(PRESETS)) quality.add(new Option(p.label, k, false, k === settings.quality));
+  tod.value = settings.timeOfDay;
+  $('#sens').value = settings.sensitivity;
+  $('#controls-help').innerHTML = isTouch
+    ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок'
+    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка · Space — прыжок · F — машина/вышка · V — вид в машине · Esc — пауза';
+
+  const save = () => {
+    settings.nick = nick.value.trim().slice(0, 16);
+    settings.quality = quality.value;
+    settings.timeOfDay = tod.value;
+    settings.sensitivity = parseFloat($('#sens').value);
+    saveSettings(settings);
+  };
+
+  let game = null;
+  const status = (text, err = false) => { const el = $('#net-status'); el.textContent = text; el.classList.toggle('err', err); };
+
+  // общий запуск: net = null — одиночная игра
+  async function launch(net = null, welcome = null) {
+    $('#menu').classList.add('hidden');
+    $('#loading').classList.remove('hidden');
+    game = new Game(net, welcome);
+    game.sound.unlock();
+    window.__game = game;
+    try {
+      await game.init((p, label) => {
+        $('#load-bar').style.width = `${p * 100}%`;
+        $('#load-label').textContent = label;
+      });
+    } catch (e) {
+      console.error(e);
+      $('#load-label').textContent = 'Ошибка: ' + e.message;
+      return;
+    }
+    $('#loading').classList.add('hidden');
+    game.start();
+    game.hud.message(net
+      ? `Комната <b>${net.code}</b> — передайте код друзьям. Tab — таблица очков.`
+      : `Удачной охоты, ${esc(settings.nick)}! Стадо оленей — впереди, к северу. Машины — у базы за спиной.`);
+  }
+
+  const needNick = () => {
+    save();
+    if (!settings.nick) { nick.focus(); nick.classList.add('err'); return true; }
+    return false;
+  };
+
+  async function joinRoom(code) {
+    const net = new Net();
+    status('Подключение…');
+    try {
+      // одна автоматическая повторная попытка при сетевом сбое (мобильная сеть и т. п.)
+      const welcome = await net.connect(code, settings.nick).catch(async (e) => {
+        if (/не найдена|заполнена/.test(e.message)) throw e;
+        await new Promise((r) => setTimeout(r, 1200));
+        return net.connect(code, settings.nick);
+      });
+      // звук разрешаем, пока ещё есть «жест» пользователя
+      await launch(net, welcome);
+    } catch (e) {
+      status(e.message, true);
+    }
+  }
+
+  $('#btn-solo').addEventListener('click', () => { if (!needNick()) launch(); });
+  $('#btn-create').addEventListener('click', async () => {
+    if (needNick()) return;
+    status('Создаём комнату…');
+    try {
+      const { code } = await createRoom();
+      $('#room-code').value = code;
+      await joinRoom(code);
+    } catch (e) {
+      status('Сервер недоступен. Запустите его: npm run dev в папке server', true);
+    }
+  });
+  const join = () => {
+    if (needNick()) return;
+    const code = $('#room-code').value.trim().toUpperCase();
+    if (code.length !== CODE_LEN) { status(`Код — ${CODE_LEN} символов`, true); return; }
+    joinRoom(code);
+  };
+  $('#btn-join').addEventListener('click', join);
+  $('#room-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
+  // ссылка-приглашение: ...?room=ABCDE
+  const invite = new URLSearchParams(location.search).get('room');
+  if (invite) $('#room-code').value = invite.toUpperCase().slice(0, CODE_LEN);
+
+  $('#btn-board').addEventListener('click', () => $('#board').classList.toggle('hidden'));
+  $('#btn-board').addEventListener('touchstart', (e) => { e.preventDefault(); $('#board').classList.toggle('hidden'); }, { passive: false });
+
+  // общий рейтинг в меню
+  leaderboard().then(({ top }) => {
+    if (!top?.length) return;
+    $('#lb').innerHTML = top.slice(0, 10).map((r) => `<li><b>${esc(r.nick)}</b> — ${r.score} очк., добыча: ${r.kills}</li>`).join('');
+    $('#lb-wrap').classList.remove('hidden');
+  }).catch(() => {});
+
+  $('#btn-resume').addEventListener('click', () => game?.pause(false));
+  $('#btn-apply').addEventListener('click', () => {
+    settings.quality = $('#quality-pause').value;
+    settings.timeOfDay = $('#tod-pause').value;
+    settings.sensitivity = parseFloat($('#sens-pause').value);
+    saveSettings(settings);
+    location.reload();
+  });
+  $('#btn-menu').addEventListener('click', () => location.reload());
+  const qp = $('#quality-pause');
+  for (const [k, p] of Object.entries(PRESETS)) qp.add(new Option(p.label, k, false, k === settings.quality));
+  $('#tod-pause').value = settings.timeOfDay;
+  $('#sens-pause').value = settings.sensitivity;
+  $('#sens-pause').addEventListener('input', (e) => { settings.sensitivity = parseFloat(e.target.value); saveSettings(settings); });
+}
+
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+setupMenu();
