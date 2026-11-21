@@ -66,7 +66,7 @@ export class Post {
   // lite — телефон: без MSAA, свечение в низком разрешении, меньше выборок у лучей
   constructor(renderer, scene, camera, lite = false) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: lite ? 0 : 4 });
+    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(renderer, rt);
     this.composer.addPass(new RenderPass(scene, camera));
     this.rays = new ShaderPass({ ...RaysShader, fragmentShader: lite ? RaysShader.fragmentShader.replaceAll('48', '20') : RaysShader.fragmentShader });

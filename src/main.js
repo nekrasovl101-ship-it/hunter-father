@@ -289,9 +289,9 @@ class Game {
     if (this._resT < 1.5) return;
     const fps = this._fpsN / this._fpsAcc;
     this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
-    const target = isTouch ? 45 : 55;
+    const target = isTouch ? 40 : 55;
     let s = this.resScale;
-    if (fps < target - 3) s = Math.max(0.55, s * (fps < target * 0.7 ? 0.82 : 0.92));
+    if (fps < target - 3) s = Math.max(isTouch ? 0.72 : 0.6, s * (fps < target * 0.7 ? 0.88 : 0.94)); // не опускаемся до «пикселей»
     else if (fps > target + 8 || (fps > 58 && s < 1)) s = Math.min(1, s * 1.06);
     if (Math.abs(s - this.resScale) > 0.01) {
       this.resScale = s;

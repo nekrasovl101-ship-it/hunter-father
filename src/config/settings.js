@@ -29,11 +29,12 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 // Настройки под телефон: те же режимы, но легче (меньше травы, теней, разрешения, без 2K-текстур).
 // «Высокая» и «Ультра» на телефоне выглядят почти так же, но идут заметно плавнее.
 const MOBILE = {
-  medium: { pixelRatio: 1.3, grass: 8000 },
-  high: { pixelRatio: 1.5, msaa: false, shadowMap: 1024, shadowDist: 50, terrainSeg: 256, grass: 18000, grassDist: 40, treeHi: 70, viewDist: 300, aniso: 4, shadowEvery: 2 },
+  medium: { pixelRatio: 1.75, msaa: true, grass: 8000 },
+  low: { pixelRatio: 1.4, msaa: true },
+  high: { pixelRatio: 2, msaa: true, shadowMap: 1024, shadowDist: 50, terrainSeg: 256, grass: 18000, grassDist: 40, treeHi: 70, viewDist: 300, aniso: 8, shadowEvery: 2 },
   ultra: {
-    pixelRatio: 1.5, msaa: false, shadowMap: 2048, softShadows: false, shadowDist: 60, terrainSeg: 320, grass: 30000, grassDist: 55,
-    grassNear: 15000, grassBlades: 7, hdTextures: false, viewDist: 360, treeHi: 90, aniso: 4, postLite: true, reflectScale: 0.25, shadowEvery: 2,
+    pixelRatio: 2, msaa: true, shadowMap: 2048, softShadows: false, shadowDist: 60, terrainSeg: 320, grass: 30000, grassDist: 55,
+    grassNear: 15000, grassBlades: 7, hdTextures: false, viewDist: 360, treeHi: 90, aniso: 8, postLite: true, reflectScale: 0.25, shadowEvery: 2,
   },
 };
 export function getPreset(key) {
