@@ -65,7 +65,7 @@ export class Environment {
     // время
     const m = this.timeMode;
     if (m === 'day') this.hours = 13;
-    else if (m === 'sunset') this.hours = 19.1;
+    else if (m === 'sunset') this.hours = 19.62;
     else if (m === 'night') this.hours = 0.5;
     else if (m === 'real') { const n = new Date(); this.hours = n.getHours() + n.getMinutes() / 60 + n.getSeconds() / 3600; }
     else this.hours = (this.hours + dt / 75) % 24; // 1 игровой час = 75 с

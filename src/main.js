@@ -649,7 +649,7 @@ class Game {
         this.puddleMesh.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root, this.puddleMesh]);
       }
     }
-    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night)); } else this.renderer.render(this.scene, this.camera);
+    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night), this.sky.sunset); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
 

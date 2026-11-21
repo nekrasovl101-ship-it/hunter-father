@@ -138,9 +138,9 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         dry *= 1.0 - uSeason.z * 0.6;
         #ifdef FINE_GRASS
         // приглушённые природные цвета: тёмный низ, оливково-зелёные кончики, у части — соломенные
-        vec3 baseC = vec3(0.012, 0.022, 0.006);
-        vec3 tipLush = mix(vec3(0.07, 0.11, 0.03), vec3(0.11, 0.14, 0.045), color.b);
-        vec3 tipDry = mix(vec3(0.2, 0.17, 0.08), vec3(0.26, 0.22, 0.12), color.b);
+        vec3 baseC = vec3(0.022, 0.036, 0.011);
+        vec3 tipLush = mix(vec3(0.1, 0.15, 0.04), vec3(0.15, 0.19, 0.06), color.b);
+        vec3 tipDry = mix(vec3(0.26, 0.22, 0.1), vec3(0.33, 0.28, 0.15), color.b);
         #else
         vec3 baseC = vec3(0.025, 0.05, 0.012);
         vec3 tipLush = vec3(0.13, 0.22, 0.04);
@@ -159,7 +159,18 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
       .replace('#include <common>', '#include <common>\nvarying vec3 vGrassCol;')
       .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = vGrassCol;')
       // обе стороны травинки освещаются одинаково (нормаль «вверх» без разворота)
-      .replace('#include <normal_fragment_begin>', 'float faceDirection = 1.0;\nvec3 normal = normalize(vNormal);\nvec3 nonPerturbedNormal = normal;');
+      .replace('#include <normal_fragment_begin>', 'float faceDirection = 1.0;\nvec3 normal = normalize(vNormal);\nvec3 nonPerturbedNormal = normal;')
+      // травинки тонкие: низкое солнце освещает их сбоку и просвечивает насквозь (иначе на закате трава чёрная)
+      .replace('#include <opaque_fragment>', `
+        #if NUM_DIR_LIGHTS > 0
+        {
+          vec3 L = directionalLights[0].direction;
+          float low = 1.0 - clamp(abs(dot(normalize(vNormal), L)), 0.0, 1.0);
+          float back = pow(max(dot(normalize(-vViewPosition), L), 0.0), 3.0);
+          outgoingLight += diffuseColor.rgb * directionalLights[0].color * (low * 0.45 + back * 0.9);
+        }
+        #endif
+        #include <opaque_fragment>`);
   };
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
@@ -175,8 +186,15 @@ export function createGrass(preset, heightTex, shared) {
   const grass = makeLayer(bladeClump(rnd, preset.grassBlades || 7, !!preset.post), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false, !!preset.post);
   const flowers = makeLayer(flowerGeo(), Math.round(preset.grass * 0.12), tile, preset.grassDist * 0.8, heightTex, shared, rnd, true);
   group.add(grass, flowers);
+  const layers = [grass, flowers];
+  // «Ультра»: второй, очень густой слой вокруг игрока (до ~20 м) — сплошной луг под ногами
+  if (preset.grassNear) {
+    const near = makeLayer(bladeClump(rnd, 11, true), preset.grassNear, 40, 20, heightTex, shared, rnd, false, true);
+    group.add(near);
+    layers.push(near);
+  }
   group.update = (camPos, playerPos) => {
-    for (const m of [grass, flowers]) {
+    for (const m of layers) {
       m.uniforms.uCenter.value.set(camPos.x, camPos.z);
       m.uniforms.uPlayer.value.copy(playerPos);
     }

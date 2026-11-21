@@ -8,10 +8,10 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 // Постобработка для «Ультры»: HDR-буфер с MSAA ×4, мягкое свечение солнца и бликов,
 // «киношная» цветокоррекция (контраст, тёплые света / холодные тени), виньетка и лёгкое зерно.
 const GradeShader = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uVignette: { value: 0.32 } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uVignette: { value: 0.32 }, uWarm: { value: 0 } },
   vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uTime; uniform float uVignette;
+    uniform sampler2D tDiffuse; uniform float uTime; uniform float uVignette; uniform float uWarm;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -22,6 +22,11 @@ const GradeShader = {
       c = mix(c, c * c * (3.0 - 2.0 * c), 0.28);
       // тёплые света, прохладные тени
       c += mix(vec3(-0.012, 0.0, 0.018), vec3(0.018, 0.008, -0.014), smoothstep(0.15, 0.75, l));
+      // закат: тёплый «киношный» тон — золотые света, сиреневые тени, насыщеннее
+      float lw = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      vec3 warm = mix(c * vec3(0.92, 0.86, 1.08), c * vec3(1.12, 0.95, 0.82), smoothstep(0.1, 0.6, lw));
+      warm = mix(vec3(lw), warm, 1.15);
+      c = mix(c, warm, uWarm);
       // виньетка
       vec2 d = vUv - 0.5;
       c *= 1.0 - uVignette * smoothstep(0.25, 0.85, dot(d, d) * 2.2);
@@ -82,7 +87,9 @@ export class Post {
   }
 
   // sunDir — направление на солнце, sunColor — его цвет
-  render(dt, sunDir, sunColor, k = 1) {
+  render(dt, sunDir, sunColor, k = 1, sunset = 0) {
+    this.grade.uniforms.uWarm.value = sunset * 0.85;
+    this.bloom.strength = 0.22 + sunset * 0.2;
     this.grade.uniforms.uTime.value += dt;
     if (sunDir) {
       const cam = this.camera;

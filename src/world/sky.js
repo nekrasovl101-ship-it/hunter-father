@@ -6,8 +6,9 @@ import * as THREE from 'three';
 const KEYS = [
   { e: -0.40, zen: 0x01030a, hor: 0x080c1a, sun: 0x6a7aa0, si: 0.3, hs: 0x22304e, hg: 0x040506, hi: 0.14 },
   { e: -0.12, zen: 0x0a1430, hor: 0x2a2848, sun: 0x6a6a90, si: 0.12, hs: 0x34405e, hg: 0x0a0a0c, hi: 0.22 },
-  { e: 0.00, zen: 0x22305c, hor: 0xd8683a, sun: 0xff6a28, si: 1.0, hs: 0x907890, hg: 0x2a2018, hi: 0.45 },
-  { e: 0.10, zen: 0x31497e, hor: 0xf09858, sun: 0xff9a50, si: 2.0, hs: 0xa898a8, hg: 0x3a2e22, hi: 0.6 },
+  { e: 0.00, zen: 0x26286a, hor: 0xff5530, sun: 0xff5018, si: 1.2, hs: 0xb07aa8, hg: 0x4a2a20, hi: 0.68 },
+  { e: 0.10, zen: 0x37479a, hor: 0xff8c4c, sun: 0xff8a36, si: 2.2, hs: 0xd0a0bc, hg: 0x4a382c, hi: 0.72 },
+  { e: 0.22, zen: 0x4064aa, hor: 0xf8b878, sun: 0xffb868, si: 2.4, hs: 0xbcb2c4, hg: 0x3c3426, hi: 0.62 },
   { e: 0.40, zen: 0x4a78b8, hor: 0xe2d0aa, sun: 0xffd9a0, si: 2.5, hs: 0xb4bed0, hg: 0x3a3624, hi: 0.62 },
   { e: 1.10, zen: 0x3f7fd0, hor: 0xb9d4ea, sun: 0xfff4e0, si: 2.8, hs: 0xb0cce8, hg: 0x363622, hi: 0.6 },
 ];
@@ -35,6 +36,7 @@ export class SkySystem {
       uNight: { value: 0 },
       uCover: { value: 0 },
       uEnvPass: { value: 0 },
+      uSunset: { value: 0 },
     };
     const skyMat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -48,7 +50,7 @@ export class SkySystem {
         }`,
       fragmentShader: /* glsl */`
         uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uMoonDir;
-        uniform float uTime, uNight, uCover, uEnvPass;
+        uniform float uTime, uNight, uCover, uEnvPass, uSunset;
         varying vec3 vDir;
         float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float vn(vec2 p) {
@@ -62,6 +64,17 @@ export class SkySystem {
           vec3 col = mix(uHorizon, uZenith, smoothstep(0.03, 0.7, h));
           col = mix(col, uHorizon * 0.8, smoothstep(0.0, -0.2, d.y));
           float sunUp = smoothstep(-0.12, 0.02, uSunDir.y);
+          // закат: оранжевое зарево у солнца, розово-сиреневая полоса выше, к зениту — глубокий индиго
+          if (uSunset > 0.01) {
+            vec2 dh = normalize(d.xz + 1e-5), sh = normalize(uSunDir.xz + 1e-5);
+            float toward = max(dot(dh, sh), 0.0);
+            float band = smoothstep(0.0, 0.12, h) * smoothstep(0.6, 0.12, h);
+            vec3 pink = vec3(0.98, 0.42, 0.62), violet = vec3(0.42, 0.26, 0.62), gold = vec3(1.0, 0.55, 0.18);
+            vec3 ss = mix(violet, pink, 0.35 + 0.65 * toward);
+            col = mix(col, ss * mix(0.55, 1.0, toward), band * uSunset * 0.6 * (1.0 - uCover * 0.6));
+            col += gold * pow(toward, 5.0) * smoothstep(0.45, 0.0, h) * uSunset * 0.9 * (1.0 - uCover * 0.7);
+            col += vec3(1.0, 0.35, 0.12) * pow(toward, 2.0) * smoothstep(0.12, 0.0, abs(d.y)) * uSunset * 0.35;
+          }
           float s = max(dot(d, uSunDir), 0.0);
           col += uSunColor * (pow(s, 900.0) * 6.0 * sunUp * (1.0 - uEnvPass) + pow(s, 12.0) * 0.35 + pow(s, 3.0) * 0.12) * sunUp * (1.0 - uCover * 0.85);
           // звёзды и луна
@@ -84,6 +97,14 @@ export class SkySystem {
             vec3 cloudCol = mix(uHorizon * 1.05, vec3(0.95) * max(0.08, 1.0 - uNight) + uSunColor * 0.25 * sunUp, 0.55 + (n - shade) * 2.0);
             cloudCol *= mix(1.0, 0.45, uCover * uCover);   // тяжёлые дождевые тучи темнее
             cloudCol += uSunColor * pow(s, 6.0) * 0.6 * sunUp;
+            // на закате облака подсвечены снизу: у солнца — золото и персик, дальше — розовые и лиловые
+            if (uSunset > 0.01) {
+              float tw = max(dot(normalize(d.xz + 1e-5), normalize(uSunDir.xz + 1e-5)), 0.0);
+              vec3 lit = mix(vec3(0.85, 0.36, 0.55), vec3(1.0, 0.62, 0.3), pow(tw, 3.0));
+              vec3 dark = vec3(0.32, 0.22, 0.42);
+              vec3 sc = mix(dark, lit * 1.25, clamp(0.35 + (n - shade) * 3.0 + tw * 0.4, 0.0, 1.0));
+              cloudCol = mix(cloudCol, sc, uSunset * (1.0 - uCover * 0.5));
+            }
             col = mix(col, cloudCol, cov * 0.95);
           }
           gl_FragColor = vec4(col, 1.0);
@@ -158,6 +179,9 @@ export class SkySystem {
     const sunC = C(a.sun, b.sun);
     this.uniforms.uSunColor.value.copy(sunC);
     this.uniforms.uNight.value = night;
+    // сила «закатных» красок: солнце низко над горизонтом (вечер и утро)
+    this.sunset = THREE.MathUtils.smoothstep(e, -0.12, 0.0) * (1 - THREE.MathUtils.smoothstep(e, 0.08, 0.3)) * (1 - overcast * 0.6);
+    this.uniforms.uSunset.value = this.sunset;
     this.uniforms.uCover.value = Math.min(1, cloud * 0.8 + storm);
 
     // главный направленный свет: солнце днём, луна ночью

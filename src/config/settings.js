@@ -12,14 +12,14 @@ export const PRESETS = {
   },
   high: {
     label: 'Высокая', pixelRatio: 2, antialias: true, shadows: true, shadowMap: 2048,
-    terrainSeg: 320, normalMaps: true, grass: 32000, grassDist: 50,
+    terrainSeg: 320, normalMaps: true, grass: 45000, grassDist: 60,
     treeHi: 100, viewDist: 380, shadowDist: 70,
   },
   ultra: {
     label: 'Ультра (не для телефонов)', pixelRatio: 2.5, antialias: true, shadows: true, shadowMap: 4096,
-    terrainSeg: 448, normalMaps: true, grass: 70000, grassDist: 72,
+    terrainSeg: 448, normalMaps: true, grass: 100000, grassDist: 105,
     treeHi: 150, viewDist: 480, shadowDist: 100, softShadows: true, aniso: 16,
-    hdTextures: true, post: true, grassBlades: 13,
+    hdTextures: true, post: true, grassBlades: 9, grassNear: 60000,
   },
 };
 
