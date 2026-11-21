@@ -159,7 +159,9 @@ class Game {
     for (const rv of list) {
       const v = await Vehicle.create(rv.key, this.world, this.ground, rv.x, rv.z, rv.heading);
       v.netId = rv.id;
-      v.remoteDriver = this.net ? (this.welcome.vehicles.find((q) => q.id === rv.id)?.driver || 0) : 0;
+      const wv = this.net ? this.welcome.vehicles.find((q) => q.id === rv.id) : null;
+      v.remoteDriver = wv?.driver || 0;
+      v.seats = wv?.seats ? [...wv.seats] : [0, 0, 0, 0];
       v.onCrash = (k) => { if (k > 3) this.sound.crash(k); };
       v.onLand = (k) => this.sound.crash(k * 0.3);
       this.vehicles.push(v);
@@ -455,36 +457,46 @@ class Game {
   }
 
   requestVehicle(v) {
-    if (!this.net) { this.enterVehicle(v); return; }
-    if (v.remoteDriver) { this.hud.message('Машина занята'); return; }
+    if (!this.net) { this.enterVehicle(v, 0); return; }
+    // сервер сам выберет место: за руль, если свободно, иначе пассажиром
+    if (v.seats && v.seats.every(Boolean)) { this.hud.message('В машине нет мест'); return; }
     this.net.send({ t: 'enter', id: v.netId });
   }
 
-  enterVehicle(v) {
+  // seat: 0 — водитель, 1–3 — пассажиры
+  enterVehicle(v, seat = 0) {
     this.driving = v;
-    v.driver = 'me';
+    this.seat = seat;
+    if (seat === 0) v.driver = 'me';
     this.gun.root.visible = false;
     this.input.aim = false;
     this.vcam.reset(v);
-    this.vcam.firstPerson = false;
-    this.sound.engineStart();
-    document.body.classList.add('driving');
-    this.hud.message(`${v.cfg.name}: W/S — газ/тормоз, A/D — руль, Space — ручник, V — камера, F — выйти`);
+    this.vcam.firstPerson = true;   // сразу вид из салона (V — камера снаружи)
+    this.vcam.yawOff = 0;
+    this.vcam.pitchOff = seat === 0 ? 0.12 : 0;
+    if (seat === 0) this.sound.engineStart();
+    document.body.classList.toggle('driving', seat === 0);
+    document.body.classList.toggle('passenger', seat > 0);
+    this.hud.message(seat === 0
+      ? `${v.cfg.name}: W/S — газ/тормоз, A/D — руль, Space — ручник, V — камера, F — выйти`
+      : `Вы пассажир (${seat === 1 ? 'спереди' : v.cfg.name === 'Пикап' ? 'в кузове' : 'сзади'}). Можно стрелять. V — камера, F — выйти`);
   }
   exitVehicle() {
     const v = this.driving;
-    if (Math.abs(v.speed) > 4) { this.hud.message('Сначала остановитесь'); return; }
+    const passenger = this.seat > 0;
+    if (Math.abs(v.speed) > (passenger ? 8 : 4)) { this.hud.message(passenger ? 'Машина едет слишком быстро' : 'Сначала остановитесь'); return; }
     const p = v.exitPoint();
     this.player.pos.set(p.x, this.ground.sample(p.x, p.z), p.z);
     this.player.vel.set(0, 0, 0);
     this.player.yaw = v.heading + Math.PI;
     this.player.pitch = 0;
-    v.driver = null;
-    v.speed = 0;
+    if (!passenger) { v.driver = null; v.speed = 0; }
     this.driving = null;
-    if (this.net) { this.net.send({ t: 'exit', id: v.netId }); v.remoteDriver = 0; }
-    this.sound.engineStop();
-    document.body.classList.remove('driving');
+    this.seat = 0;
+    if (v.cockpit) v.cockpit.visible = false;
+    if (this.net) { this.net.send({ t: 'exit', id: v.netId }); if (!passenger) v.remoteDriver = 0; }
+    if (!passenger) this.sound.engineStop();
+    document.body.classList.remove('driving', 'passenger');
     this.camera.fov = this.player.baseFov;
     this.camera.updateProjectionMatrix();
   }
@@ -535,11 +547,18 @@ class Game {
       .on('enter', (m) => {
         const v = this.vehicles.find((q) => q.netId === m.id);
         if (!v) return;
-        v.remoteDriver = m.by;
-        if (m.by === net.id) this.enterVehicle(v);
+        const seat = m.seat || 0;
+        (v.seats ||= [0, 0, 0, 0])[seat] = m.by;
+        if (seat === 0) v.remoteDriver = m.by;
+        if (m.by === net.id) this.enterVehicle(v, seat);
       })
-      .on('exit', (m) => { const v = this.vehicles.find((q) => q.netId === m.id); if (v && m.by !== net.id) v.remoteDriver = 0; })
-      .on('deny', () => this.hud.message('Машина занята'))
+      .on('exit', (m) => {
+        const v = this.vehicles.find((q) => q.netId === m.id);
+        if (!v) return;
+        if (v.seats && m.seat >= 0) v.seats[m.seat] = 0;
+        if (m.by !== net.id && m.seat === 0) v.remoteDriver = 0;
+      })
+      .on('deny', () => this.hud.message('В машине нет мест'))
       .on('close', (reason) => {
         this.hud.message(`Связь потеряна: ${reason}. Переподключаемся…`, 'warn');
         $('#room-tag').textContent = 'нет связи — переподключение…';
@@ -575,7 +594,7 @@ class Game {
         t: 'st', p: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)], yaw: +this.player.yaw.toFixed(2), pitch: +this.player.pitch.toFixed(2),
         sp: +this.player.speed.toFixed(1), a: this.player.health > 0 ? 1 : 0, ai: this.gun.aimT > 0.5 ? 1 : 0, g: +this.ground.sample(p.x, p.z).toFixed(1),
       };
-      if (this.driving) msg.vs = this.driving.netState();
+      if (this.driving && this.seat === 0) msg.vs = this.driving.netState();
       net.send(msg);
     }
     const snap = this.snap;
@@ -593,13 +612,21 @@ class Game {
       // машины, которыми управляют другие
       for (const vs of snap.v) {
         const v = this.vehicles.find((q) => q.netId === vs[0]);
-        if (!v || v === this.driving) continue;
+        if (!v || (v === this.driving && this.seat === 0)) continue;
         v.remoteDriver = vs[9];
+        // высота 0 — сервер ещё не получал положение этой машины: ставим на землю
+        if (vs[2] === 0) vs[2] = this.ground.sample(vs[1], vs[3]);
         if (vs[9] && vs[9] !== net.id) v.applyRemote(dt, vs.slice(1, 9));
         else if (!vs[9] && (Math.abs(v.pos.x - vs[1]) > 0.5 || Math.abs(v.pos.z - vs[3]) > 0.5)) v.applyRemote(dt, [...vs.slice(1, 7), 0, 0]);
         else v.update(dt, null);
       }
-      this.hunters.sync(snap.p, net.id, dt, this.camera.position);
+      this.hunters.sync(snap.p, net.id, dt, this.camera.position, (vid, seat, out) => {
+        const v = this.vehicles.find((q) => q.netId === vid);
+        if (!v) return null;
+        v.root.updateMatrixWorld();
+        v.seatWorld(out, seat);
+        return v.heading;
+      });
     }
     this.views.sync([...this.netAnimals.values()], dt, this.camera);
   }
@@ -659,7 +686,23 @@ class Game {
     if (input.consume('debug')) this.views.debug = !this.views.debug;
     const p = this.player.pos;
 
-    if (this.driving) {
+    if (this.driving && this.seat > 0) {
+      // пассажир: сидит на своём месте, свободно смотрит по сторонам и может стрелять
+      const v = this.driving;
+      input.consume('jump');
+      if (input.consume('view')) this.vcam.firstPerson = !this.vcam.firstPerson;
+      const armed = this.slot === 'rifle';
+      if (input.consume('fire') && this.player.health > 0) { if (armed) this.shoot(); else this.select('rifle'); }
+      if (input.consume('reload')) this.gun.reload();
+      this.vcam.update(dt, v, input.takeLook(), this.seat, this.gun.aimT);
+      this.gun.update(dt, armed && input.aim && this.vcam.firstPerson, 0);
+      if (!armed || !this.vcam.firstPerson) this.gun.root.visible = false;
+      v.root.updateMatrixWorld();
+      v.seatWorld(this._seatPos ||= new THREE.Vector3(), this.seat);
+      p.set(this._seatPos.x, this._seatPos.y - 1.6, this._seatPos.z);
+      this.player.yaw = this.camera.rotation.y; this.player.pitch = this.camera.rotation.x;
+      this.player.speed = Math.abs(v.speed);
+    } else if (this.driving) {
       const v = this.driving;
       input.consume('fire'); input.consume('reload'); input.consume('jump');
       if (input.consume('view')) this.vcam.firstPerson = !this.vcam.firstPerson;
@@ -667,6 +710,10 @@ class Game {
       p.set(v.pos.x, v.pos.y, v.pos.z);
       this.player.speed = Math.abs(v.speed);
       this.vcam.update(dt, v, input.takeLook());
+      // салон с рулём и руками — только в виде из кабины
+      const ck = v.buildCockpit();
+      ck.visible = this.vcam.firstPerson;
+      if (ck.visible) ck.updateCockpit(dt);
       this.sound.engineUpdate(v.rpm, v.throttle);
       // двигатель распугивает зверей
       if (this.sim && Math.abs(v.speed) > 3 && Math.random() < dt * 2) this.sim.noise(v.pos.x, v.pos.z, 0.35);
@@ -751,7 +798,12 @@ class Game {
     else {
       const v = this.nearestVehicle();
       const tw = !v && this.nearestTower();
-      if (v) { prompt = `<b>${key}</b> — сесть: ${v.cfg.name}`; useBtn = true; }
+      if (v) {
+        const driverFree = !v.remoteDriver || !this.net;
+        const free = v.seats ? v.seats.filter((q) => !q).length : 4;
+        prompt = free === 0 ? `${v.cfg.name}: мест нет` : `<b>${key}</b> — сесть ${driverFree ? 'за руль' : 'пассажиром'}: ${v.cfg.name}`;
+        useBtn = free > 0;
+      }
       else if (tw) { prompt = `<b>${key}</b> — подняться на вышку`; useBtn = true; }
     }
     if (prompt !== this._prompt) { $('#prompt').innerHTML = prompt; this._prompt = prompt; }

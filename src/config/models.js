@@ -30,14 +30,17 @@ export const MODELS = {
   },
 };
 
-// Машины. wheels — регулярка по именам мешей колёс; seat — точка глаз водителя (локально)
+// Машины. wheels — регулярка по именам мешей колёс; seat — точка глаз водителя (локально, нос машины — +Z);
+// seats — глаза всех мест: водитель, пассажир спереди, двое сзади (у пикапа — в кузове)
 export const VEHICLES = {
   rover: {
     url: 'models/rover.glb', name: 'Внедорожник', length: 4.7, yaw: 0,
     wheels: /^Tire[1-4]$/, maxSpeed: 26, accel: 8, seat: new THREE.Vector3(0.38, 1.55, 0.15),
+    seats: [[0.38, 1.55, 0.15], [-0.38, 1.55, 0.15], [0.38, 1.58, -0.85], [-0.38, 1.58, -0.85]],
   },
   pickup: {
     url: 'models/pickup.glb', name: 'Пикап', length: 5.4, yaw: 0,
     wheels: /Wheel/i, maxSpeed: 29, accel: 7.5, seat: new THREE.Vector3(0.42, 1.6, 0.4),
+    seats: [[0.42, 1.6, 0.4], [-0.42, 1.6, 0.4], [0.45, 1.95, -1.5], [-0.45, 1.95, -1.5]],
   },
 };

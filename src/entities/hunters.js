@@ -65,15 +65,16 @@ export class RemoteHunters {
     this.list.delete(id);
   }
 
-  // states: [id, x, y, z, yaw, pitch, speed, veh, alive, aim]
-  sync(states, myId, dt, camPos) {
+  // states: [id, x, y, z, yaw, pitch, speed, veh, alive, aim, seat]
+  // seatFn(vehId, seat, out) → ставит out в точку глаз этого места, возвращает курс машины
+  sync(states, myId, dt, camPos, seatFn) {
     for (const s of states) {
-      const [id, x, y, z, yaw, , speed, veh, alive, aim] = s;
+      const [id, x, y, z, yaw, , speed, veh, alive, aim, seat] = s;
       if (id === myId) continue;
       const v = this.list.get(id);
       if (!v) continue;
       const first = v.target === null;
-      v.target = { x, y, z, yaw, speed, veh, alive, aim };
+      v.target = { x, y, z, yaw, speed, veh, alive, aim, seat: seat || 0 };
       if (first) { v.x = x; v.y = y; v.z = z; v.yaw = yaw; }
     }
     for (const v of this.list.values()) {
@@ -84,7 +85,22 @@ export class RemoteHunters {
       let dy = t.yaw - v.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
       v.yaw += dy * k;
       const root = v.model.root;
-      root.visible = !t.veh;
+      root.visible = true;
+      // в машине: сидит на своём месте (видно в окнах), смотрит туда же, куда игрок
+      const seatHeading = t.veh && seatFn ? seatFn(t.veh, t.seat, this._seat ||= new THREE.Vector3()) : null;
+      if (seatHeading !== null && seatHeading !== undefined) {
+        root.position.set(this._seat.x, this._seat.y - 1.62, this._seat.z); // голова на уровне глаз места
+        root.rotation.y = t.seat === 0 ? seatHeading : v.yaw + Math.PI;
+        if (v.rifle) v.rifle.visible = t.seat > 0;
+        v.model.play(t.seat > 0 && t.aim ? 'aim' : 'idle', 0.2);
+        v.model.update(dt);
+        // ник того, кто сидит рядом в той же машине, не лезет в глаза
+        v.label.visible = Math.hypot(this._seat.x - camPos.x, this._seat.z - camPos.z) > 4;
+        v.label.scale.set(1.6, 0.4, 1);
+        continue;
+      }
+      if (v.rifle) v.rifle.visible = true;
+      v.label.visible = true;
       root.position.set(v.x, v.y, v.z);
       // yaw камеры смотрит в -Z, модель — в +Z
       root.rotation.y = v.yaw + Math.PI;

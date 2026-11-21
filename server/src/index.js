@@ -72,7 +72,7 @@ export class Room extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS best (nick TEXT PRIMARY KEY, score INTEGER, kills INTEGER, at INTEGER)');
     this.players = new Map(); // id -> состояние
-    this.vehicles = ROOM_VEHICLES.map((v) => ({ ...v, y: 0, pitch: 0, roll: 0, speed: 0, steer: 0, driver: 0 }));
+    this.vehicles = ROOM_VEHICLES.map((v) => ({ ...v, y: 0, pitch: 0, roll: 0, speed: 0, steer: 0, driver: 0, seats: [0, 0, 0, 0] }));
     this.history = [];
     this.timer = null;
     this.sim = null;
@@ -88,7 +88,7 @@ export class Room extends DurableObject {
   _meta(k) { return this.sql.exec('SELECT v FROM meta WHERE k = ?', k).toArray()[0]?.v; }
 
   _newPlayer(id, nick, ws, score = 0, kills = 0) {
-    return { id, nick, ws, score, kills, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, speed: 0, veh: 0, alive: 1, aim: 0, seen: Date.now() };
+    return { id, nick, ws, score, kills, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, speed: 0, veh: 0, seat: 0, alive: 1, aim: 0, seen: Date.now() };
   }
 
   async fetch(req) {
@@ -161,7 +161,7 @@ export class Room extends DurableObject {
     const snap = {
       t: 'snap', ts: now,
       a: this.sim.animals.map((a) => [a.id, SPECIES_IDS.indexOf(a.type), r1(a.x), r1(a.z), r2(a.heading), ANIMS.indexOf(a.anim), r1(a.speed)]),
-      p: [...this.players.values()].filter((p) => p.ready).map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), r1(p.speed), p.veh, p.alive, p.aim]),
+      p: [...this.players.values()].filter((p) => p.ready).map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), r1(p.speed), p.veh, p.alive, p.aim, p.seat]),
       v: this.vehicles.map((v) => [v.id, r2(v.x), r2(v.y), r2(v.z), r2(v.heading), r2(v.pitch), r2(v.roll), r1(v.speed), r2(v.steer), v.driver]),
     };
     this._broadcast(snap);
@@ -193,7 +193,7 @@ export class Room extends DurableObject {
         this._send(ws, {
           t: 'welcome', id: p.id, code: this._meta('code'),
           players: [...this.players.values()].map((q) => ({ id: q.id, nick: q.nick })),
-          vehicles: this.vehicles.map((v) => ({ id: v.id, key: v.key, driver: v.driver })),
+          vehicles: this.vehicles.map((v) => ({ id: v.id, key: v.key, driver: v.driver, seats: v.seats })),
         });
         this._broadcast({ t: 'join', id: p.id, nick: p.nick }, p.id);
         this._sendScores();
@@ -214,8 +214,13 @@ export class Room extends DurableObject {
       case 'shot': this._shot(p, m); break;
       case 'enter': {
         const v = this.vehicles.find((q) => q.id === m.id);
-        if (v && !v.driver && !p.veh) { v.driver = p.id; p.veh = v.id; this._broadcast({ t: 'enter', id: v.id, by: p.id }); }
-        else this._send(ws, { t: 'deny', id: m.id });
+        // место: водитель, если свободно, иначе первое свободное пассажирское
+        const seat = v && !p.veh ? v.seats.indexOf(0) : -1;
+        if (seat >= 0) {
+          v.seats[seat] = p.id; p.veh = v.id; p.seat = seat;
+          if (seat === 0) v.driver = p.id;
+          this._broadcast({ t: 'enter', id: v.id, by: p.id, seat });
+        } else this._send(ws, { t: 'deny', id: m.id });
         break;
       }
       case 'exit': this._exitVehicle(p); break;
@@ -225,8 +230,13 @@ export class Room extends DurableObject {
 
   _exitVehicle(p) {
     const v = this.vehicles.find((q) => q.id === p.veh);
-    if (v) { v.driver = 0; v.speed = 0; this._broadcast({ t: 'exit', id: v.id, by: p.id }); }
-    p.veh = 0;
+    if (v) {
+      const seat = v.seats.indexOf(p.id);
+      if (seat >= 0) v.seats[seat] = 0;
+      if (v.driver === p.id) { v.driver = 0; v.speed = 0; }
+      this._broadcast({ t: 'exit', id: v.id, by: p.id, seat });
+    }
+    p.veh = 0; p.seat = 0;
   }
 
   _shot(p, m) {

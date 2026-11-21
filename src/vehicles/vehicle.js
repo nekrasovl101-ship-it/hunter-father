@@ -242,8 +242,97 @@ export class Vehicle {
     this.root.rotateZ(this.roll);
   }
 
-  seatWorld(out = new THREE.Vector3()) {
-    return out.copy(this.cfg.seat).applyMatrix4(this.root.matrixWorld);
+  seatWorld(out = new THREE.Vector3(), seat = 0) {
+    const sp = this.cfg.seats?.[seat];
+    return (sp ? out.set(sp[0], sp[1], sp[2]) : out.copy(this.cfg.seat)).applyMatrix4(this.root.matrixWorld);
+  }
+
+  // Салон от первого лица (только для своего водителя): руль с руками, приборная панель со спидометром
+  buildCockpit() {
+    if (this.cockpit) return this.cockpit;
+    const g = new THREE.Group();
+    const s = this.cfg.seat;
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1d1c1a, roughness: 0.55, metalness: 0.2 });
+    const panel = new THREE.MeshStandardMaterial({ color: 0x2a2724, roughness: 0.8, metalness: 0 });
+    const glove = new THREE.MeshStandardMaterial({ color: 0x3b2c20, roughness: 0.85, metalness: 0 });
+    const sleeve = new THREE.MeshStandardMaterial({ color: 0x4a5236, roughness: 0.9, metalness: 0 });
+    // руль: обод, три спицы, ступица; наклонён к водителю
+    const wheel = new THREE.Group();
+    wheel.position.set(s.x, s.y - 0.33, s.z + 0.46);
+    wheel.rotation.x = 0.5;   // верх руля дальше от водителя, низ ближе
+    const spin = new THREE.Group();
+    wheel.add(spin);
+    spin.add(new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.022, 10, 40), dark));
+    spin.add(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.05, 20).rotateX(Math.PI / 2), dark));
+    for (const a of [Math.PI / 2, Math.PI * 7 / 6, -Math.PI / 6]) {
+      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.028, 0.018), dark);
+      sp.position.set(Math.cos(a) * 0.1, Math.sin(a) * 0.1, 0); sp.rotation.z = a;
+      spin.add(sp);
+    }
+    // рулевая колонка
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.35, 10).rotateX(Math.PI / 2), dark);
+    col.position.set(0, 0, 0.18); wheel.add(col);
+    g.add(wheel);
+    // руки в перчатках на ободе (на «10 и 2»), предплечья тянутся к плечам
+    const grips = [new THREE.Object3D(), new THREE.Object3D()];
+    grips[0].position.set(-0.17, 0.08, 0); grips[1].position.set(0.17, 0.08, 0);
+    const arms = [];
+    for (const gp of grips) {
+      spin.add(gp);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 10).scale(1, 1.25, 0.9), glove);
+      gp.add(hand);
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 1, 10), sleeve);
+      g.add(arm);
+      arms.push(arm);
+    }
+    const shoulders = [new THREE.Vector3(s.x - 0.24, s.y - 0.42, s.z - 0.08), new THREE.Vector3(s.x + 0.24, s.y - 0.42, s.z - 0.08)];
+    // приборная панель во всю ширину + щиток приборов со спидометром и тахометром
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(this.size.x * 0.86, 0.22, 0.4), panel);
+    dash.position.set(0, s.y - 0.42, s.z + 0.84);
+    g.add(dash);
+    const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 128;
+    const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+    const gauges = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.18), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+    gauges.position.set(s.x, s.y - 0.27, s.z + 0.68);
+    gauges.rotation.set(-0.35, Math.PI, 0);
+    g.add(gauges);
+    this.root.add(g);
+    g.visible = false;
+    const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3();
+    let gT = 0;
+    this.cockpit = g;
+    g.updateCockpit = (dt) => {
+      spin.rotation.z = -this.steer * 4;   // руль крутится сильнее колёс
+      g.updateMatrixWorld(true);
+      const inv = this.root.matrixWorld.clone().invert();
+      grips.forEach((gp, i) => {
+        gp.getWorldPosition(tmpA).applyMatrix4(inv);   // точка хвата в координатах машины
+        tmpB.copy(shoulders[i]);
+        dir.subVectors(tmpA, tmpB);
+        const len = dir.length();
+        arms[i].position.copy(tmpB).addScaledVector(dir, 0.5);
+        arms[i].scale.set(1, len, 1);
+        arms[i].quaternion.setFromUnitVectors(up, dir.normalize());
+      });
+      // приборы — 8 раз в секунду
+      if ((gT += dt) > 0.12) {
+        gT = 0;
+        const c = canvas.getContext('2d');
+        c.fillStyle = '#0c0d0c'; c.fillRect(0, 0, 256, 128);
+        const dial = (cx, val, max, label) => {
+          c.strokeStyle = '#3a3d38'; c.lineWidth = 4; c.beginPath(); c.arc(cx, 70, 50, Math.PI * 0.8, Math.PI * 2.2); c.stroke();
+          c.strokeStyle = '#d9a441'; c.beginPath(); c.arc(cx, 70, 50, Math.PI * 0.8, Math.PI * 0.8 + Math.PI * 1.4 * Math.min(1, val / max)); c.stroke();
+          const a = Math.PI * 0.8 + Math.PI * 1.4 * Math.min(1, val / max);
+          c.strokeStyle = '#f04a2a'; c.lineWidth = 3; c.beginPath(); c.moveTo(cx, 70); c.lineTo(cx + Math.cos(a) * 42, 70 + Math.sin(a) * 42); c.stroke();
+          c.fillStyle = '#e8e2cc'; c.font = 'bold 22px sans-serif'; c.textAlign = 'center'; c.fillText(String(Math.round(val)), cx, 100);
+          c.font = '11px sans-serif'; c.fillStyle = '#9a9a8a'; c.fillText(label, cx, 118);
+        };
+        dial(68, Math.abs(this.speed) * 3.6, 140, 'км/ч');
+        dial(188, (this.rpm || 0) * 6, 6, 'об/мин ×1000');
+        tex.needsUpdate = true;
+      }
+    };
+    return g;
   }
 
   // где высадить водителя: слева, иначе справа
@@ -275,17 +364,28 @@ export class VehicleCamera {
     this.pos.copy(v.pos).addScaledVector(v.forward, -8).add(new THREE.Vector3(0, 3, 0));
     this.yawOff = 0;
   }
-  update(dt, v, look) {
+  // seat > 0 — пассажир: свободный обзор во все стороны (можно стрелять), aimT — приближение оптики
+  update(dt, v, look, seat = 0, aimT = 0) {
     const cam = this.camera;
-    if (look.x || look.y) { this.idle = 0; this.yawOff -= look.x * 0.004; this.pitchOff = Math.max(-0.3, Math.min(0.9, this.pitchOff + look.y * 0.003)); }
-    else { this.idle += dt; if (this.idle > 1.5 && !this.firstPerson) this.yawOff *= Math.max(0, 1 - dt * 2); }
+    const passenger = seat > 0;
+    const sens = passenger ? 0.0022 * (1 - aimT * 0.78) : 0.004;
+    if (look.x || look.y) {
+      this.idle = 0;
+      this.yawOff -= look.x * sens;
+      this.pitchOff = passenger && this.firstPerson
+        ? Math.max(-1.2, Math.min(1.2, this.pitchOff - look.y * sens))
+        : Math.max(-0.3, Math.min(0.9, this.pitchOff + look.y * 0.003));
+    }
+    else { this.idle += dt; if (this.idle > 1.5 && !this.firstPerson && !passenger) this.yawOff *= Math.max(0, 1 - dt * 2); }
     if (this.firstPerson) {
       v.root.updateMatrixWorld(true);
-      v.seatWorld(cam.position);
+      v.seatWorld(cam.position, seat);
       cam.rotation.set(0, 0, 0, 'YXZ');
       cam.rotation.y = v.heading + Math.PI + this.yawOff;
-      cam.rotation.x = -v.pitch - (this.pitchOff - 0.12) * 0.8;
+      cam.rotation.x = passenger ? this.pitchOff - v.pitch * 0.5 : -v.pitch - (this.pitchOff - 0.12) * 0.8;
       cam.rotation.z = -v.roll * 0.5;
+      const fov = passenger ? 72 + (14 - 72) * aimT * aimT : 72;
+      if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
       return;
     }
     const h = v.heading + this.yawOff;
