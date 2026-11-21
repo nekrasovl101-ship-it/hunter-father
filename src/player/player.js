@@ -23,7 +23,8 @@ export class Player {
 
   update(dt, input, aimT, binocT = 0) {
     const look = input.takeLook();
-    const zoom = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1, 0.22, aimT), 0.12, binocT);
+    const aimFov = this.aimFov || 14;   // поле зрения в оптике (у снайперской — зависит от кратности)
+    const zoom = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1, aimFov / this.baseFov, aimT), 0.12, binocT);
     const sens = 0.0022 * zoom;
     this.yaw -= look.x * sens;
     this.pitch -= look.y * sens;
@@ -74,7 +75,7 @@ export class Player {
     const bob = this.onGround ? Math.sin(performance.now() * 0.001 * (4 + this.speed * 1.4)) * Math.min(this.speed, 7) * 0.012 * (1 - aimT) : 0;
     this.camera.position.set(this.pos.x, this.pos.y + EYE + bob, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-    const fov = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.baseFov, 14, aimT * aimT), 9, binocT * binocT);
+    const fov = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.baseFov, aimFov, aimT * aimT), 9, binocT * binocT);
     if (Math.abs(fov - this.camera.fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
   }
 

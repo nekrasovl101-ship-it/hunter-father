@@ -1,3 +1,4 @@
+import { heightAt } from '../../shared/terrain.js';
 import * as THREE from 'three';
 import { SPECIES } from '../../shared/animals.js';
 import { loadModel, ModelInstance } from './assets.js';
@@ -74,7 +75,8 @@ export class AnimalViews {
       seen.add(a.id);
       const v = this.views.get(a.id) || this._create(a);
       // сглаживание (для онлайна сервер шлёт ~10 раз/с)
-      const k = Math.min(1, dt * 12);
+      // в одиночной игре зверь рисуется ровно там, где его считает симуляция (без запаздывания)
+      const k = this.smooth ? Math.min(1, dt * 12) : 1;
       v.x += (a.x - v.x) * k;
       v.z += (a.z - v.z) * k;
       let dh = a.heading - v.heading;
@@ -82,7 +84,8 @@ export class AnimalViews {
       v.heading += dh * k;
       if (!v.model) continue;
       const root = v.model.root;
-      const y = this.ground.sample(v.x, v.z);
+      // высота — та же, по которой считаются попадания (heightAt), иначе пуля проходит мимо «тела»
+      const y = this.smooth ? heightAt(v.x, v.z) : a.y ?? heightAt(v.x, v.z);
       root.position.set(v.x, y, v.z);
       root.rotation.y = v.heading;
 

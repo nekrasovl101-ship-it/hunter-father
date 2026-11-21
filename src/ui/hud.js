@@ -37,7 +37,7 @@ export class Hud {
   }
 
   update(dt, { gun, yaw, score, kills, showFps }) {
-    const bullets = '▮'.repeat(gun.ammo) + '▯'.repeat(MAG_SIZE - gun.ammo);
+    const bullets = '▮'.repeat(gun.ammo) + '▯'.repeat(Math.max(0, (gun.magSize || MAG_SIZE) - gun.ammo));
     const state = gun.state === 'reloading' ? ' <small>перезарядка…</small>' : '';
     this.ammo.innerHTML = `<b>${bullets}</b> <span>${gun.reserve}</span>${state}`;
     this.score.innerHTML = `Добыча: <b>${kills}</b> · Очки: <b>${score}</b>`;

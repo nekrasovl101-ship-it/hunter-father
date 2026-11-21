@@ -1,6 +1,8 @@
 import './style.css';
 import * as THREE from 'three';
 import { Post } from './world/post.js';
+import { Vision } from './world/vision.js';
+import { HEAT } from './entities/assets.js';
 import { Binoculars, Phone } from './ui/gadgets.js';
 import { createPuddles, createPuddleMesh } from './world/puddles.js';
 import { Environment, Precipitation, seasonFor, seasonVector, SEASONS, WEATHER_NAMES } from './world/environment.js';
@@ -140,6 +142,7 @@ class Game {
     this.gun = new Rifle(camera, this.sound);
     this.vcam = new VehicleCamera(camera);
     this.views = new AnimalViews(scene, this.ground, preset);
+    this.views.smooth = !!this.net;
     await this.views.preload(Object.keys(SPECIES));
     if (this.net) {
       // онлайн: животными управляет сервер
@@ -193,6 +196,7 @@ class Game {
     this.rocks.update(camera.position, true);
     if (preset.post) { this.post = new Post(renderer, scene, camera, !!preset.postLite); renderer.info.autoReset = false; }
     // тени: на телефоне пересчитываются через кадр
+    this.vision = new Vision(renderer, this.post);
     renderer.shadowMap.autoUpdate = false;
     this.mirrorEvery = preset.mirrorEvery || 1;
     this._frameN = 0;
@@ -251,13 +255,15 @@ class Game {
     const dir = new THREE.Vector3();
     cam.getWorldDirection(dir);
     // разброс: от бедра большой, в оптику — почти нулевой
-    const spread = THREE.MathUtils.lerp(0.035 + Math.min(this.player.speed, 7) * 0.006, 0.0015, this.gun.aimT);
+    // в оптике точность набирается быстро: уже на середине подъёма прицела разброс почти нулевой
+    const aimK = THREE.MathUtils.smoothstep(this.gun.aimT, 0.15, 0.6);
+    const spread = THREE.MathUtils.lerp(0.035 + Math.min(this.player.speed, 7) * 0.006, this.gun.weapon === 'sniper' ? 0.0004 : 0.0012, aimK);
     dir.x += (Math.random() - 0.5) * spread * 2;
     dir.y += (Math.random() - 0.5) * spread * 2;
     dir.z += (Math.random() - 0.5) * spread * 2;
     dir.normalize();
     const o = cam.position;
-    this.player.addRecoil(0.03 + 0.03 * (1 - this.gun.aimT));
+    this.player.addRecoil((0.03 + 0.03 * (1 - this.gun.aimT)) * (this.gun.weapon === 'sniper' ? 1.5 : 1));
     if (this.net) {
       // онлайн: попадание считает сервер (с поправкой на задержку)
       this._lastShot = { o: o.clone(), dir: dir.clone() };
@@ -338,22 +344,57 @@ class Game {
   }
 
   // ---------- инвентарь ----------
+  // ночное видение в прицеле: по умолчанию само включается в темноте, N — переключить вручную
+  nightVision() { return this.nvOn ?? (this.sky.night > 0.2 || this.sky.light < 0.35); }
+
+  updateVision(dt) {
+    const thermal = this.slot === 'thermal' && !this.driving;
+    const nv = !thermal && this.slot === 'sniper' && this.gun.aimT > 0.85 && this.nightVision();
+    const mode = thermal ? 1 : nv ? 2 : 0;
+    if (mode !== this.vision.mode) this.vision.set(mode);
+    this.vision.uniforms.uGain.value = 1.2 + 6 * this.sky.night + 2 * Math.max(0, 0.6 - this.sky.light);
+    if (mode) this.vision.tick(dt);
+    HEAT.value = thermal ? 1 : 0;
+    // тепловизор видит сквозь туман и темноту дальше
+    const fog = this.scene.fog;
+    if (thermal) { this._fogBase ??= [fog.near, fog.far]; fog.near = this._fogBase[0] * 3; fog.far = this._fogBase[1] * 3; }
+    else if (this._fogBase) { [fog.near, fog.far] = this._fogBase; this._fogBase = null; }
+    $('#thermal-ui').classList.toggle('on', thermal);
+    if (thermal) this.gun.root.visible = false;
+    const sc = $('#scope');
+    sc.classList.toggle('sniper', this.slot === 'sniper');
+    sc.classList.toggle('nv', nv);
+    if (this.slot === 'sniper') {
+      const txt = `×${this.sniperZoom || 8} · ${nv ? 'НОЧНОЕ ВИДЕНИЕ' : 'дневной'} · N — ночное, колесо/± — кратность`;
+      if (txt !== this._scopeTxt) { $('#scope-info').textContent = txt; this._scopeTxt = txt; }
+    }
+  }
+
+  get armed() { return this.slot === 'rifle' || this.slot === 'sniper'; }
+
   select(slot) {
-    if (slot === this.slot) slot = 'rifle';   // повторный выбор — убрать в карман
+    if (slot === this.slot && slot !== 'rifle') slot = 'rifle';   // повторный выбор — убрать в карман
     this.slot = slot;
+    if (slot === 'rifle' || slot === 'sniper') this.gun.setWeapon(slot);
     this.binoc.toggle(slot === 'binoc');
     this.phone.toggle(slot === 'phone');
-    if (slot !== 'rifle') { this.input.aim = false; this.input.syncAimButton?.(); }
+    if (!this.armed) { this.input.aim = false; this.input.syncAimButton?.(); }
   }
 
   handleInventory(input) {
-    const order = ['rifle', 'binoc', 'phone'];
-    const keys = { slot1: 'rifle', slot2: 'binoc', slot3: 'phone', slot4: 'light', slot5: 'med', binoc: 'binoc', phone: 'phone', light: 'light' };
+    const order = ['rifle', 'sniper', 'binoc', 'phone', 'thermal'];
+    const keys = { slot1: 'rifle', slot2: 'sniper', slot3: 'binoc', slot4: 'phone', slot5: 'thermal', slot6: 'light', slot7: 'med', binoc: 'binoc', phone: 'phone', light: 'light' };
     const picks = [];
     for (const [edge, slot] of Object.entries(keys)) if (input.consume(edge)) picks.push(slot);
-    for (const slot of ['rifle', 'binoc', 'phone', 'light', 'med']) if (input.consume('pick:' + slot)) picks.push(slot);
-    if (input.consume('slotNext')) picks.push(order[(order.indexOf(this.slot) + 1) % 3]);
-    if (input.consume('slotPrev')) picks.push(order[(order.indexOf(this.slot) + 2) % 3]);
+    for (const slot of ['rifle', 'sniper', 'binoc', 'phone', 'thermal', 'light', 'med']) if (input.consume('pick:' + slot)) picks.push(slot);
+    // снайперская в оптике: колесо и +/− меняют кратность, N — ночное видение
+    const sniperAim = this.slot === 'sniper' && this.gun.aimT > 0.5;
+    let zoomStep = (input.consume('zin') ? 1 : 0) - (input.consume('zout') ? 1 : 0);
+    if (sniperAim) zoomStep += (input.consume('slotPrev') ? 1 : 0) - (input.consume('slotNext') ? 1 : 0);
+    if (zoomStep) this.sniperZoom = Math.max(4, Math.min(16, Math.round((this.sniperZoom || 8) * Math.pow(1.25, zoomStep) * 2) / 2));
+    if (input.consume('nv')) { this.nvOn = !this.nightVision(); this.hud.message(`Ночное видение: ${this.nvOn ? 'вкл' : 'выкл'}`); }
+    if (input.consume('slotNext')) picks.push(order[(order.indexOf(this.slot) + 1) % order.length]);
+    if (input.consume('slotPrev')) picks.push(order[(order.indexOf(this.slot) + order.length - 1) % order.length]);
     for (const slot of picks) {
       if (slot === 'light') { this.lightOn = !this.lightOn; this.flashlight.intensity = this.lightOn ? 60 : 0; this.sound.click?.(0, 2600, 0.35); continue; }
       if (slot === 'med') {
@@ -366,10 +407,11 @@ class Game {
       if (slot === 'rifle' && this.slot === 'rifle') continue;
       this.select(slot);
     }
+    document.body.classList.toggle('sniper-aim', this.slot === 'sniper' && this.gun.aimT > 0.5);
     if (this.slot === 'phone' && !this.phone.on) this.select('rifle'); // закрыли крестиком
     // интерфейс
     const hb = this._hb || (this._hb = { slots: [...document.querySelectorAll('#hotbar .slot[data-slot]')] });
-    const key = `${this.slot}|${this.lightOn}|${this.medkits}|${this.gun.ammo}/${this.gun.reserve}|${this.kills}`;
+    const key = `${this.slot}|${this.lightOn}|${this.medkits}|${this.gun.weapon}${this.gun.ammo}/${this.gun.reserve}|${this.kills}`;
     if (key !== hb.key) {
       hb.key = key;
       for (const el of hb.slots) el.classList.toggle('active', el.dataset.slot === this.slot);
@@ -377,7 +419,9 @@ class Game {
       document.querySelector('#hotbar [data-slot=med]').classList.toggle('empty', this.medkits <= 0);
       $('#inv-light').textContent = this.lightOn ? 'вкл' : 'выкл';
       $('#inv-med').textContent = '×' + this.medkits;
-      $('#inv-ammo').textContent = `${this.gun.ammo}/${this.gun.reserve}`;
+      const st = this.gun.stock, w = this.gun.weapon;
+      const ra = w === 'rifle' ? [this.gun.ammo, this.gun.reserve] : [st.rifle.ammo, st.rifle.reserve];
+      $('#inv-ammo').textContent = `${ra[0]}/${ra[1]}`;
       $('#inv-trophy').textContent = this.kills;
     }
   }
@@ -692,7 +736,7 @@ class Game {
       const v = this.driving;
       input.consume('jump');
       if (input.consume('view')) this.vcam.firstPerson = !this.vcam.firstPerson;
-      const armed = this.slot === 'rifle';
+      const armed = this.armed;
       if (input.consume('fire') && this.player.health > 0) { if (armed) this.shoot(); else this.select('rifle'); }
       if (input.consume('reload')) this.gun.reload();
       this.vcam.update(dt, v, input.takeLook(), this.seat, this.gun.aimT);
@@ -720,11 +764,12 @@ class Game {
       if (this.sim && Math.abs(v.speed) > 3 && Math.random() < dt * 2) this.sim.noise(v.pos.x, v.pos.z, 0.35);
     } else {
       input.consume('view');
-      const armed = this.slot === 'rifle';
+      const armed = this.armed;
       if (input.consume('fire') && this.player.health > 0) { if (armed) this.shoot(); else this.select('rifle'); }
       if (input.consume('reload')) { if (!armed) this.select('rifle'); this.gun.reload(); }
       this.gun.update(dt, armed && input.aim, this.player.speed);
       if (!armed) this.gun.root.visible = false;
+      this.player.aimFov = this.slot === 'sniper' ? 72 / (this.sniperZoom || 8) : 14;
       this.player.update(dt, input, this.gun.aimT, this.binoc.t);
     }
     const cp = this.camera.position;
@@ -754,6 +799,7 @@ class Game {
     }
     this.impacts.update(dt);
     this.binoc.update(dt, () => this.rangefinder());
+    this.updateVision(dt);
     this.updateHouseLight(dt);
     this.phone.update(dt, this.phoneState());
 
@@ -776,7 +822,7 @@ class Game {
     this._frameN++;
     if (this._frameN % (this.preset.shadowEvery || 1) === 0) this.renderer.shadowMap.needsUpdate = true;
     if (this.preset.adaptive) this.adaptResolution(dt);
-    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night), this.sky.sunset); } else this.renderer.render(this.scene, this.camera);
+    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night), this.sky.sunset); } else if (this.vision.mode) this.vision.render(this.scene, this.camera, 0); else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
 
@@ -826,7 +872,7 @@ function setupMenu() {
   $('#sens').value = settings.sensitivity;
   $('#controls-help').innerHTML = isTouch
     ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок, 🔭 бинокль, 📱 телефон с картой'
-    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка (в оптике — выстрел) · Space — прыжок · F — машина/вышка/дверь · V — вид в машине · B — бинокль · M — телефон (карта) · Esc — пауза';
+    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка (в оптике — выстрел) · Space — прыжок · F — машина/вышка/дверь · V — вид в машине · 1–7 — инвентарь (2 — снайперская с ночной оптикой, 5 — тепловизор) · B — бинокль · M — телефон (карта) · Esc — пауза';
 
   // «Ультра» на телефоне — только после предупреждения
   const warnUltra = (sel) => sel.addEventListener('change', () => {

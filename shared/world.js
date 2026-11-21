@@ -147,7 +147,8 @@ export class World {
     let prevAbove = true;
     for (let t = 0.5; t < maxDist; t += 0.75) {
       const x = ox + dx * t, y = oy + dy * t, z = oz + dz * t;
-      const above = y > heightAt(x, z);
+      // допуск 0.3 м: отображаемый рельеф чуть грубее точного — пуля не «застревает» в невидимых буграх
+      const above = y > heightAt(x, z) - 0.3;
       if (!above && prevAbove) { best = t; break; }
       prevAbove = above;
     }

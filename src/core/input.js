@@ -26,7 +26,10 @@ export class Input {
       if (e.code === 'KeyB') this._edges.add('binoc');
       if (e.code === 'KeyM' || e.code === 'KeyP') this._edges.add('phone');
       if (e.code === 'KeyL') this._edges.add('light');
-      const dg = /^Digit([1-5])$/.exec(e.code);
+      if (e.code === 'KeyN') this._edges.add('nv');
+      if (e.code === 'Equal' || e.code === 'NumpadAdd') this._edges.add('zin');
+      if (e.code === 'Minus' || e.code === 'NumpadSubtract') this._edges.add('zout');
+      const dg = /^Digit([1-7])$/.exec(e.code);
       if (dg) this._edges.add('slot' + dg[1]);
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -174,6 +177,8 @@ export class Input {
     jb.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); this._edges.add('jump'); this.jumpHeld = true; this._jumpTouch = true; }, { passive: false });
     jb.addEventListener('touchend', () => { this.jumpHeld = false; this._jumpTouch = false; });
     tap('#btn-use', () => this._edges.add('use'));
+    tap('#btn-zin', () => this._edges.add('zin'));
+    tap('#btn-zout', () => this._edges.add('zout'));
 
     tap('#btn-view', () => this._edges.add('view'));
     tap('#btn-pause', () => this._edges.add('pause'));

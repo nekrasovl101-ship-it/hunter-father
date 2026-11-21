@@ -38,7 +38,9 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 export function getPreset(key) {
   const base = PRESETS[key] || PRESETS.medium;
   // на телефоне тени и отражения пересчитываются через кадр — глазом не видно, а нагрузка ниже
-  return { shadowEvery: 1, reflectScale: 0.4, puddleMirror: true, ...base, ...(isTouch ? { shadowEvery: 2, mirrorEvery: 2 } : {}), adaptive: key === 'ultra' && !isTouch };
+  // «Ультра»: тени и отражения пересчитываются через кадр (при 30–60 FPS глазу не видно) — качество то же
+  const ultraLike = key === 'ultra' || key === 'ultraPhone';
+  return { shadowEvery: 1, reflectScale: 0.4, puddleMirror: true, ...base, ...(isTouch || ultraLike ? { shadowEvery: 2, mirrorEvery: 2 } : {}), adaptive: key === 'ultra' && !isTouch };
 }
 
 const KEY = 'hf_settings_v1';

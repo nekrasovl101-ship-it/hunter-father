@@ -13,6 +13,7 @@ function quad({ bh, bl, br, hy, hz, hr }) {
     { part: 'vitals', x: 0, y: bh, z: bl * 0.45, r: br * 0.58, dmg: 150 },
     { part: 'body', x: 0, y: bh, z: bl * 0.4, r: br, dmg: 55 },
     { part: 'body', x: 0, y: bh, z: -bl * 0.5, r: br, dmg: 55 },
+    { part: 'body', x: 0, y: bh * 0.92, z: -bl * 0.05, r: br * 1.05, dmg: 55 }, // середина корпуса — без щелей
     { part: 'legs', x: 0, y: bh * 0.42, z: 0, r: bh * 0.38, dmg: 25 },
   ];
 }
@@ -313,7 +314,8 @@ export class AnimalSim {
   }
 
   // Выстрел. Возвращает {animal, part, dist, killed, score} или {wallDist}.
-  shoot(ox, oy, oz, dx, dy, dz, maxDist, shooterId) {
+  // куда попадёт пуля (без урона): { animal, part, dmg, dist } или { wallDist }
+  peek(ox, oy, oz, dx, dy, dz, maxDist) {
     const wall = this.world.raycastStatic(ox, oy, oz, dx, dy, dz, maxDist);
     let best = null;
     for (const a of this.animals) {
@@ -327,7 +329,7 @@ export class AnimalSim {
       for (const hb of sp.hitboxes) {
         const wx = a.x + hb.x * c + hb.z * s;
         const wz = a.z - hb.x * s + hb.z * c;
-        const t = raySphere(ox, oy, oz, dx, dy, dz, wx, a.y + hb.y, wz, hb.r);
+        const t = raySphere(ox, oy, oz, dx, dy, dz, wx, a.y + hb.y, wz, hb.r * 1.12);
         if (t < wall) { hits.push({ hb, t }); tmin = Math.min(tmin, t); }
       }
       if (!hits.length || (best && tmin >= best.dist)) continue;
@@ -336,7 +338,13 @@ export class AnimalSim {
       for (const h of hits) if (h.t < tmin + 0.6 && (!pick || h.hb.dmg > pick.hb.dmg)) pick = h;
       best = { animal: a, part: pick.hb.part, dmg: pick.hb.dmg, dist: tmin };
     }
-    if (!best) return { wallDist: wall };
+    if (best) best.wallDist = wall;
+    return best || { wallDist: wall };
+  }
+
+  shoot(ox, oy, oz, dx, dy, dz, maxDist, shooterId) {
+    const best = this.peek(ox, oy, oz, dx, dy, dz, maxDist);
+    if (!best.animal) return best;
     const a = best.animal;
     const sp = SPECIES[a.type];
     a.hp -= best.dmg;
@@ -361,7 +369,6 @@ export class AnimalSim {
       } else this._flee(a, ox, oz, 15);
     }
     best.killed = killed;
-    best.wallDist = wall;
     return best;
   }
 }

@@ -5,6 +5,8 @@ import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferG
 import { MODELS } from '../config/models.js';
 
 const loader = new GLTFLoader();
+// тепловизор: 1 — звери и охотники «светятся» теплом
+export const HEAT = { value: 0 };
 const cache = new Map();
 
 // Склеивает материалы без текстур в один с цветами вершин:
@@ -108,11 +110,12 @@ function furify(root, strength = 1, smooth = true) {
       m.onBeforeCompile = (sh, r) => {
         prev?.call(m, sh, r);
         sh.uniforms.uFurFreq = { value: freq };
+        sh.uniforms.uHeat = HEAT;
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', '#include <common>\nvarying vec3 vFurP; varying vec3 vFurN;')
           .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFurP = position; vFurN = objectNormal;');
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', '#include <common>\n' + FUR_GLSL)
+          .replace('#include <common>', '#include <common>\nuniform float uHeat;\n' + FUR_GLSL)
           .replace('#include <color_fragment>', `#include <color_fragment>
             float strand = fn3(vFurP * uFurFreq * vec3(1.0, 3.5, 1.0)) * 0.6 + fn3(vFurP * uFurFreq * 2.7) * 0.4;
             diffuseColor.rgb *= mix(1.0, 0.72 + 0.56 * strand, ${strength.toFixed(2)});
@@ -121,6 +124,8 @@ function furify(root, strength = 1, smooth = true) {
           .replace('#include <opaque_fragment>', `
             float rim = pow(1.0 - max(dot(normalize(normal), normalize(vViewPosition)), 0.0), 3.0);
             outgoingLight += diffuseColor.rgb * rim * 0.45 * ${strength.toFixed(2)};
+            // тепловизор: тело тёплое (ярче в центре, к контуру остывает)
+            outgoingLight = mix(outgoingLight, vec3(5.0) * (0.55 + 0.45 * max(dot(normalize(normal), normalize(vViewPosition)), 0.0)), uHeat);
             #include <opaque_fragment>`);
       };
       m.customProgramCacheKey = () => (m0.customProgramCacheKey?.() || '') + 'fur' + strength;

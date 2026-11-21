@@ -248,21 +248,30 @@ export class Room extends DurableObject {
     const dir = [d[0] / len, d[1] / len, d[2] / len];
     this._broadcast({ t: 'shot', id: p.id, o, d: dir }, p.id);
 
-    // компенсация задержки: откатываем животных в момент, который видел стрелок
+    // компенсация задержки: откатываем животных в момент, который видел стрелок; если промах —
+    // пробуем соседние снимки (±1–2 тика): сеть дёргается, и стрелок мог видеть зверя чуть раньше/позже
     const rewind = Math.max(0, Math.min(500, +m.lag || 0));
     const target = Date.now() - rewind;
-    let frame = null;
-    for (const h of this.history) if (h.t <= target) frame = h;
-    const saved = [];
-    if (frame) for (const an of this.sim.animals) {
-      const old = frame.pos.get(an.id);
-      if (!old || an.state === 'dead') continue;
-      saved.push([an, an.x, an.z, an.heading, an.y]);
-      [an.x, an.z, an.heading, an.y] = old;
+    let idx = -1;
+    this.history.forEach((h, i) => { if (h.t <= target) idx = i; });
+    const tryFrames = idx < 0 ? [null] : [idx, idx - 1, idx + 1, idx - 2, idx + 2].filter((i) => i >= 0 && i < this.history.length).map((i) => this.history[i]);
+    let res = null;
+    for (const frame of tryFrames) {
+      const saved = [];
+      if (frame) for (const an of this.sim.animals) {
+        const old = frame.pos.get(an.id);
+        if (!old || an.state === 'dead') continue;
+        saved.push([an, an.x, an.z, an.heading, an.y]);
+        [an.x, an.z, an.heading, an.y] = old;
+      }
+      // пробный проход — без урона; настоящий выстрел — по тому снимку, где есть попадание
+      res = this.sim.peek ? this.sim.peek(o[0], o[1], o[2], dir[0], dir[1], dir[2], 450) : null;
+      const hitHere = res && res.animal;
+      if (hitHere || frame === tryFrames[tryFrames.length - 1]) res = this.sim.shoot(o[0], o[1], o[2], dir[0], dir[1], dir[2], 450, p.id);
+      for (const [an, x, z, h, y] of saved) if (an.state !== 'dead') { an.x = x; an.z = z; an.heading = h; an.y = y; }
+      else { an.x = x; an.z = z; an.y = y; } // убитое остаётся там, где упало сейчас
+      if (hitHere || frame === tryFrames[tryFrames.length - 1]) break;
     }
-    const res = this.sim.shoot(o[0], o[1], o[2], dir[0], dir[1], dir[2], 450, p.id);
-    for (const [an, x, z, h, y] of saved) if (an.state !== 'dead') { an.x = x; an.z = z; an.heading = h; an.y = y; }
-    else { an.x = x; an.z = z; an.y = y; } // убитое остаётся там, где упало сейчас
     this.sim.noise(o[0], o[2], 1);
 
     const out = { t: 'hit', wall: Number.isFinite(res.wallDist) ? r2(res.wallDist) : -1 };

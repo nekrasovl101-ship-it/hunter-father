@@ -53,6 +53,12 @@ function flashTexture() {
 }
 
 export const MAG_SIZE = 5;
+// Оружие: охотничий карабин и снайперская винтовка (свой магазин, медленнее затвор, сильнее отдача,
+// оптика с переменным приближением 4×–16× и ночным видением)
+export const WEAPONS = {
+  rifle: { name: 'Ружьё', mag: 5, reserve: 25, cycle: 0.95, kick: 1, scale: 1 },
+  sniper: { name: 'Снайперская', mag: 5, reserve: 20, cycle: 1.35, kick: 1.6, scale: 1.14 },
+};
 
 export class Rifle {
   constructor(camera, sound) {
@@ -68,8 +74,11 @@ export class Rifle {
     this.flash.visible = false;
     this.mesh.add(this.flash);
 
+    this.weapon = 'rifle';
+    this.magSize = MAG_SIZE;
     this.ammo = MAG_SIZE;
     this.reserve = 25;
+    this.stock = { rifle: { ammo: MAG_SIZE, reserve: 25 }, sniper: { ammo: WEAPONS.sniper.mag, reserve: WEAPONS.sniper.reserve } };
     this.state = 'ready';   // ready | cycling | reloading
     this.timer = 0;
     this.aimT = 0;
@@ -103,6 +112,19 @@ export class Rifle {
     }, undefined, () => console.warn('rifle model failed, using procedural'));
   }
 
+  // сменить оружие в руках (патроны каждого хранятся отдельно)
+  setWeapon(w) {
+    if (w === this.weapon || !WEAPONS[w]) return;
+    this.stock[this.weapon] = { ammo: this.ammo, reserve: this.reserve };
+    this.weapon = w;
+    const W = WEAPONS[w];
+    ({ ammo: this.ammo, reserve: this.reserve } = this.stock[w]);
+    this.magSize = W.mag;
+    this.mesh.scale.set(1, 1, W.scale);   // длинный ствол
+    this.state = 'ready';
+    this.sound.bolt();
+  }
+
   canFire() { return this.state === 'ready' && this.ammo > 0; }
 
   fire() {
@@ -112,18 +134,18 @@ export class Rifle {
       return false;
     }
     this.ammo--;
-    this.kick = 1;
+    this.kick = WEAPONS[this.weapon].kick;
     this.flashT = 0.05;
     this.flash.material.rotation = Math.random() * Math.PI;
     this.state = 'cycling';
-    this.timer = 0.95;
+    this.timer = WEAPONS[this.weapon].cycle;
     this.sound.shot(0);
     setTimeout(() => this.ammo >= 0 && this.sound.bolt(), 250);
     return true;
   }
 
   reload() {
-    if (this.state !== 'ready' || this.ammo >= MAG_SIZE || this.reserve <= 0) return;
+    if (this.state !== 'ready' || this.ammo >= this.magSize || this.reserve <= 0) return;
     this.state = 'reloading';
     this.timer = 0.45;
     this.reloadStep = 0;
@@ -133,7 +155,7 @@ export class Rifle {
     this.timer -= dt;
     if (this.state === 'cycling' && this.timer <= 0) this.state = 'ready';
     if (this.state === 'reloading' && this.timer <= 0) {
-      if (this.ammo < MAG_SIZE && this.reserve > 0) {
+      if (this.ammo < this.magSize && this.reserve > 0) {
         this.ammo++; this.reserve--;
         this.sound.reloadRound(0);
         this.timer = 0.42;

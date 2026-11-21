@@ -192,3 +192,20 @@ body:has(#touch:not(.hidden)) #hotbar .slot i { display: none; }
 /* инвентарь и телефон лежат поверх сенсорного слоя (#touch z-index 11) */
 #hotbar, #phone { position: fixed; z-index: 13; }
 #hotbar.gone, #phone.gone { display: none; }
+
+/* снайперская оптика: тонкая сетка с мил-точками, кратность и режим ночного видения */
+#scope.sniper .reticle { background: linear-gradient(#111, #111) center / 1px 100% no-repeat, linear-gradient(#111, #111) center / 100% 1px no-repeat,
+  radial-gradient(circle, #111 1.6px, transparent 2px) center / 100% 9% repeat-y, radial-gradient(circle, #111 1.6px, transparent 2px) center / 9% 100% repeat-x; }
+#scope.sniper.nv .reticle { filter: invert(1) sepia(1) saturate(5) hue-rotate(70deg); }
+#scope-info { position: absolute; left: 50%; bottom: 9vh; transform: translateX(-50%); font: 600 14px ui-monospace, Menlo, monospace; color: #cfe8c0;
+  background: rgba(0, 0, 0, 0.45); padding: 3px 10px; border-radius: 6px; display: none; }
+#scope.sniper #scope-info { display: block; }
+/* тепловизор: рамка прибора */
+#thermal-ui { position: absolute; inset: 0; pointer-events: none; display: none; }
+#thermal-ui.on { display: block; }
+#thermal-ui .frame { position: absolute; inset: 0; box-shadow: inset 0 0 0 9vh #0b0c0b, inset 0 0 0 calc(9vh + 2px) #444; border-radius: 4vh; }
+#thermal-ui .label { position: absolute; left: 50%; top: 11vh; transform: translateX(-50%); font: 600 13px ui-monospace, Menlo, monospace; color: #e8e8e8; letter-spacing: 0.1em; }
+#thermal-ui .cross { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px; border: 1.5px solid rgba(255,255,255,0.7); border-radius: 50%; }
+#touch .zoom { display: none; right: calc(212px + var(--safe-r)); width: 46px !important; height: 46px !important; font-size: 22px !important; }
+#btn-zin { bottom: calc(190px + var(--safe-b)); } #btn-zout { bottom: calc(132px + var(--safe-b)); }
+body.sniper-aim #touch .zoom { display: block; }

@@ -103,7 +103,8 @@
     <div id="ammo"></div>
     <div id="crosshair"></div>
     <div id="hitmark"></div>
-    <div id="scope"><div class="reticle"></div></div>
+    <div id="scope"><div class="reticle"></div><div id="scope-info"></div></div>
+    <div id="thermal-ui"><div class="frame"></div><div class="label">ТЕПЛОВИЗОР · WHITE HOT</div><div class="cross"></div></div>
     <div id="binoc"><div class="lens"></div><div id="binoc-range"></div></div>
     <div id="phone">
       <div class="bar"><span id="phone-time">12:00</span><span>GPS · Охота</span><span>▮▮▮ 82%</span></div>
@@ -120,10 +121,12 @@
     <!-- Инвентарь -->
     <div id="hotbar">
       <button class="slot" data-slot="rifle"><i>1</i><span class="ico">🎯</span><small>Ружьё</small><em id="inv-ammo"></em></button>
-      <button class="slot" data-slot="binoc"><i>2</i><span class="ico">🔭</span><small>Бинокль</small></button>
-      <button class="slot" data-slot="phone"><i>3</i><span class="ico">📱</span><small>Телефон</small></button>
-      <button class="slot" data-slot="light"><i>4</i><span class="ico">🔦</span><small>Фонарик</small><em id="inv-light">выкл</em></button>
-      <button class="slot" data-slot="med"><i>5</i><span class="ico">🩹</span><small>Аптечка</small><em id="inv-med"></em></button>
+      <button class="slot" data-slot="sniper"><i>2</i><span class="ico">🔫</span><small>Снайперская (ночная оптика)</small></button>
+      <button class="slot" data-slot="binoc"><i>3</i><span class="ico">🔭</span><small>Бинокль</small></button>
+      <button class="slot" data-slot="phone"><i>4</i><span class="ico">📱</span><small>Телефон</small></button>
+      <button class="slot" data-slot="thermal"><i>5</i><span class="ico">🌡️</span><small>Тепловизор</small></button>
+      <button class="slot" data-slot="light"><i>6</i><span class="ico">🔦</span><small>Фонарик</small><em id="inv-light">выкл</em></button>
+      <button class="slot" data-slot="med"><i>7</i><span class="ico">🩹</span><small>Аптечка</small><em id="inv-med"></em></button>
       <div class="slot trophy"><span class="ico">🦌</span><small>Трофеи</small><em id="inv-trophy">0</em></div>
     </div>
   </div>
@@ -141,6 +144,8 @@
     <button id="btn-pause">❚❚</button>
     <button id="btn-use" class="hidden">🚙</button>
     <button id="btn-view" class="hidden">👁</button>
+    <button id="btn-zin" class="zoom">＋</button>
+    <button id="btn-zout" class="zoom">－</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>
