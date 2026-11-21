@@ -153,7 +153,7 @@ class Game {
     this.slot = 'rifle';
     this.medkits = 3;
     this.flashlight = new THREE.SpotLight(0xfff0d8, 0, 60, 0.42, 0.55, 1.2);
-    this.flashlight.position.set(0.25, -0.2, 0);
+    this.flashlight.position.set(0.1, -0.1, -1.6); // впереди ствола — не пересвечивает ружьё
     this.flashlight.target.position.set(0, -0.6, -10);
     camera.add(this.flashlight, this.flashlight.target);
     this.lightOn = false;
