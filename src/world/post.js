@@ -88,8 +88,8 @@ export class Post {
 
   // sunDir — направление на солнце, sunColor — его цвет
   render(dt, sunDir, sunColor, k = 1, sunset = 0) {
-    this.grade.uniforms.uWarm.value = sunset * 0.85;
-    this.bloom.strength = 0.22 + sunset * 0.2;
+    this.grade.uniforms.uWarm.value = sunset * 0.4;
+    this.bloom.strength = 0.22 + sunset * 0.08;
     this.grade.uniforms.uTime.value += dt;
     if (sunDir) {
       const cam = this.camera;

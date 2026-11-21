@@ -6,8 +6,8 @@ import * as THREE from 'three';
 const KEYS = [
   { e: -0.40, zen: 0x01030a, hor: 0x080c1a, sun: 0x6a7aa0, si: 0.3, hs: 0x22304e, hg: 0x040506, hi: 0.14 },
   { e: -0.12, zen: 0x0a1430, hor: 0x2a2848, sun: 0x6a6a90, si: 0.12, hs: 0x34405e, hg: 0x0a0a0c, hi: 0.22 },
-  { e: 0.00, zen: 0x26286a, hor: 0xff5530, sun: 0xff5018, si: 1.2, hs: 0xb07aa8, hg: 0x4a2a20, hi: 0.68 },
-  { e: 0.10, zen: 0x37479a, hor: 0xff8c4c, sun: 0xff8a36, si: 2.2, hs: 0xd0a0bc, hg: 0x4a382c, hi: 0.72 },
+  { e: 0.00, zen: 0x283466, hor: 0xe8703e, sun: 0xff6424, si: 1.2, hs: 0xa88aa8, hg: 0x44302a, hi: 0.66 },
+  { e: 0.10, zen: 0x38508e, hor: 0xf0a064, sun: 0xff9a48, si: 2.2, hs: 0xc4a8bc, hg: 0x463a2e, hi: 0.7 },
   { e: 0.22, zen: 0x4064aa, hor: 0xf8b878, sun: 0xffb868, si: 2.4, hs: 0xbcb2c4, hg: 0x3c3426, hi: 0.62 },
   { e: 0.40, zen: 0x4a78b8, hor: 0xe2d0aa, sun: 0xffd9a0, si: 2.5, hs: 0xb4bed0, hg: 0x3a3624, hi: 0.62 },
   { e: 1.10, zen: 0x3f7fd0, hor: 0xb9d4ea, sun: 0xfff4e0, si: 2.8, hs: 0xb0cce8, hg: 0x363622, hi: 0.6 },
@@ -71,9 +71,9 @@ export class SkySystem {
             float band = smoothstep(0.0, 0.12, h) * smoothstep(0.6, 0.12, h);
             vec3 pink = vec3(0.98, 0.42, 0.62), violet = vec3(0.42, 0.26, 0.62), gold = vec3(1.0, 0.55, 0.18);
             vec3 ss = mix(violet, pink, 0.35 + 0.65 * toward);
-            col = mix(col, ss * mix(0.55, 1.0, toward), band * uSunset * 0.6 * (1.0 - uCover * 0.6));
-            col += gold * pow(toward, 5.0) * smoothstep(0.45, 0.0, h) * uSunset * 0.9 * (1.0 - uCover * 0.7);
-            col += vec3(1.0, 0.35, 0.12) * pow(toward, 2.0) * smoothstep(0.12, 0.0, abs(d.y)) * uSunset * 0.35;
+            col = mix(col, ss * mix(0.6, 1.0, toward), band * uSunset * 0.3 * (1.0 - uCover * 0.6));
+            col += gold * pow(toward, 5.0) * smoothstep(0.45, 0.0, h) * uSunset * 0.5 * (1.0 - uCover * 0.7);
+            col += vec3(1.0, 0.35, 0.12) * pow(toward, 2.0) * smoothstep(0.12, 0.0, abs(d.y)) * uSunset * 0.18;
           }
           float s = max(dot(d, uSunDir), 0.0);
           col += uSunColor * (pow(s, 900.0) * 6.0 * sunUp * (1.0 - uEnvPass) + pow(s, 12.0) * 0.35 + pow(s, 3.0) * 0.12) * sunUp * (1.0 - uCover * 0.85);
@@ -103,7 +103,7 @@ export class SkySystem {
               vec3 lit = mix(vec3(0.85, 0.36, 0.55), vec3(1.0, 0.62, 0.3), pow(tw, 3.0));
               vec3 dark = vec3(0.32, 0.22, 0.42);
               vec3 sc = mix(dark, lit * 1.25, clamp(0.35 + (n - shade) * 3.0 + tw * 0.4, 0.0, 1.0));
-              cloudCol = mix(cloudCol, sc, uSunset * (1.0 - uCover * 0.5));
+              cloudCol = mix(cloudCol, sc, uSunset * 0.55 * (1.0 - uCover * 0.5));
             }
             col = mix(col, cloudCol, cov * 0.95);
           }
