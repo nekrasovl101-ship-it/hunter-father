@@ -199,7 +199,7 @@ const BROAD_SEASON = /* glsl */`
     vec3 a1 = vec3(0.95, 0.62, 0.12), a2 = vec3(0.85, 0.28, 0.08), a3 = vec3(0.72, 0.62, 0.18);
     vec3 autumn = vHash < 0.4 ? a1 : vHash < 0.7 ? a2 : a3;
     float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)) * 3.0;
-    diffuseColor.rgb = mix(diffuseColor.rgb, autumn * l, uSeason.x * (0.75 + 0.25 * vHash));
+    diffuseColor.rgb = mix(diffuseColor.rgb, autumn * l * 1.2, uSeason.x * (0.75 + 0.25 * vHash));
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.95, 1.18, 0.75), uSeason.z);
     if (uSeason.y > 0.5) {
       if (fract(vHash * 13.1 + vTop * 7.0 + l * 3.0) > 0.12) discard;
@@ -238,7 +238,7 @@ function crownMaterial(map, shared, preset, flutter, broad = false) {
         transformed.z += sin(ph * 0.8 + 1.3) * sw * 0.6;
         transformed += sin(uTime * 4.0 + position.x * 3.1 + position.y * 2.3 + ip.x) * ${flutter.toFixed(3)} * step(2.0, position.y);
         // самозатенение: внутри кроны и у низа темнее
-        vAO = clamp(0.42 + length(position.xz) * 0.22 + position.y * 0.025, 0.42, 1.0);
+        vAO = clamp(0.62 + length(position.xz) * 0.16 + position.y * 0.02, 0.62, 1.0);
         // у каждого дерева свой оттенок
         float hsh = fract(sin(ip.x * 12.9898 + ip.z * 78.233) * 43758.5453);
         vTint = mix(vec3(0.82, 0.93, 0.78), vec3(1.12, 1.06, 0.86), hsh) * 0.85;
@@ -252,8 +252,15 @@ function crownMaterial(map, shared, preset, flutter, broad = false) {
       // просвет листвы против солнца
       .replace('#include <opaque_fragment>', `
         #if NUM_DIR_LIGHTS > 0
-        float tr = pow(max(dot(normalize(-vViewPosition), directionalLights[0].direction), 0.0), 5.0);
-        outgoingLight += diffuseColor.rgb * directionalLights[0].color * tr * 0.55 * vAO;
+        vec3 Ld = directionalLights[0].direction;
+        float tr = pow(max(dot(normalize(-vViewPosition), Ld), 0.0), 5.0);
+        // листва тонкая: низкое солнце освещает её сбоку (иначе в сумерках кусты и кроны чёрные)
+        float side = 1.0 - clamp(abs(dot(normalize(vNormal), Ld)), 0.0, 1.0);
+        outgoingLight += diffuseColor.rgb * directionalLights[0].color * (tr * 0.55 + side * 0.3) * vAO;
+        #endif
+        // рассеянный свет внутри листвы: в тени кроны и кусты не чернеют
+        #if NUM_HEMI_LIGHTS > 0
+        outgoingLight += diffuseColor.rgb * mix(hemisphereLights[0].groundColor, hemisphereLights[0].skyColor, 0.6) * 0.8;
         #endif
         #include <opaque_fragment>`);
   };
@@ -368,7 +375,7 @@ export async function createTrees(world, preset, barkSet, barkBroadSet, shared, 
   const bushMesh = new THREE.InstancedMesh(toGeo(bo), crownMats[1], Math.min(bushes.length, 900));
   bushMesh.frustumCulled = false; bushMesh.count = 0;
   bushMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  bushMesh.castShadow = false; bushMesh.receiveShadow = preset.shadows;
+  bushMesh.castShadow = false; bushMesh.receiveShadow = false; // маленький куст в тени дерева иначе становится чёрным пятном
   group.add(bushMesh);
   lods.push(new InstanceLOD(bushes, makeMatrices(bushes), [bushMesh], null, Math.min(70, preset.viewDist * 0.4), 0));
 
