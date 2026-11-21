@@ -107,7 +107,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
         float dens = ${flowers ? 'hs.g * (1.0 - hs.b) * smoothstep(0.35, 0.6, hs.a) * 0.5' : 'hs.g'};
         float sc = step(aOff.w, dens) * fade * (0.65 + 0.6 * fract(aOff.w * 7.31));
         // зимой трава под снегом (торчат редкие сухие стебли), цветов нет; осенью цветов мало
-        sc *= ${flowers ? '(1.0 - uSeason.y) * (1.0 - uSeason.x * 0.85)' : '1.0 - uSeason.y * step(0.18, fract(aOff.w * 3.7))'};
+        sc *= ${flowers ? '(1.0 - uSeason.y) * (1.0 - uSeason.x * 0.85)' : '1.0 - uSeason.y * step(0.1, fract(aOff.w * 3.7))'};
         sc *= 1.0 - uSeason.y * 0.35;
         float c = cos(aOff.z), s = sin(aOff.z);
         vec3 transformed = position;

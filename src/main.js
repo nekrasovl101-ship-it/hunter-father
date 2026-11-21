@@ -83,10 +83,12 @@ class Game {
     const aniso = Math.min(renderer.capabilities.getMaxAnisotropy(), preset.aniso || (preset.antialias ? 8 : 4));
     const nm = preset.normalMaps;
     const keys = ['grass', 'meadow', 'forest', 'mud', 'rock', 'bark', 'moss', 'barkBroad', 'logs', 'roof', 'planks'];
+    if (this.season === 'winter') keys.push('snow');
+    if (this.season === 'autumn') keys.push('leaves');
     const loaded = await Promise.all(keys.map((k) => loadSet(k, {
       normal: nm && !['meadow', 'moss'].includes(k),
       hd: preset.hdTextures,
-      anisotropy: ['grass', 'meadow', 'forest', 'mud', 'rock'].includes(k) ? aniso : 2,
+      anisotropy: ['grass', 'meadow', 'forest', 'mud', 'rock', 'snow', 'leaves'].includes(k) ? aniso : 2,
     })));
     const sets = Object.fromEntries(keys.map((k, i) => [k, loaded[i]]));
 
@@ -101,19 +103,20 @@ class Game {
     this.grass = createGrass(preset, terrain.heightTex, this.shared);
     scene.add(this.grass);
     this.sky = new SkySystem(scene, preset);
+    this.sky.winter = this.season === 'winter';
     terrain.far.material = this.sky.farMaterial(preset.viewDist);
     onProgress(0.5, 'Деревья…');
     this.trees = await createTrees(this.world, preset, sets.bark, sets.barkBroad, this.shared, renderer);
     scene.add(this.trees);
-    this.rocks = createRocks(this.world, preset, sets.rock, sets.moss);
+    this.rocks = createRocks(this.world, preset, sets.rock, this.season === 'winter' ? sets.snow : sets.moss); // зимой сверху снег вместо мха
     scene.add(this.rocks);
     onProgress(0.6, 'Избушки…');
     this.buildings = createBuildings(this.world, preset, sets);
     scene.add(this.buildings);
     this.towers = this.buildings.towers;
-    this.buildings.setSeason(this.season);
+    this.buildings.setSeason(this.season, sets.snow);
     this.impacts = new Impacts(scene);
-    this.precip = new Precipitation(scene, preset);
+    this.precip = new Precipitation(scene, preset, terrain.heightTex);
     // тёплый свет лампы в доме, где сейчас игрок (один источник на всю карту)
     this.houseLight = new THREE.PointLight(0xffb060, 0, 10, 1.4);
     scene.add(this.houseLight);
@@ -571,7 +574,8 @@ class Game {
       this.trees.setLight(this.sky.light);
       this.buildings.setEvening(Math.max(this.sky.night, env.weather.cloud * 0.3 * (1 - this.sky.light)));
     }
-    this.precip.update(dt, this.camera.position, env.weather, this.sky.hemi.color);
+    this.sky.updateEnv(this.renderer, dt);
+    this.precip.update(dt, this.camera.position, env.weather, this.sky.hemi.color, this.renderer.getPixelRatio() * innerHeight / 600);
     this.sound.rain(this.paused ? 0 : env.weather.rain);
     if (input.consume('use')) { this.select('rifle'); this.useAction(); }
     this.handleInventory(input);

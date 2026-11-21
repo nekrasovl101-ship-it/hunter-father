@@ -208,7 +208,13 @@ const BROAD_SEASON = /* glsl */`
   }
 `;
 const NEEDLE_SEASON = /* glsl */`
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.89, 0.94), uSeason.y * smoothstep(0.45, 0.85, vTop + fract(vHash * 7.3) * 0.2) * 0.75);
+  {
+    // снег лежит на верхней стороне лап: по нормали карточки и высоте внутри кроны
+    float up = clamp(normalize(vNormal).y * 0.5 + 0.5, 0.0, 1.0);
+    float nz = fract(sin(dot(floor(vViewPosition.xy * 6.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float k = uSeason.y * smoothstep(0.35, 0.75, vTop * 0.6 + up * 0.5 + nz * 0.25);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.93, 0.98) * (0.85 + 0.15 * nz), k * 0.9);
+  }
 `;
 
 function crownMaterial(map, shared, preset, flutter, broad = false) {

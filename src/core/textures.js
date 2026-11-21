@@ -16,6 +16,8 @@ export const TEXTURE_SETS = {
   logs: 'wood_trunk_wall',
   roof: 'roof_planks',
   planks: 'wood_planks',
+  snow: 'snow_02',
+  leaves: 'dry_decay_leaves',
 };
 
 const texLoader = new THREE.TextureLoader();
@@ -33,7 +35,7 @@ export async function initTextures(renderer) {
 }
 
 // Набор 2K-текстур для «Ультры» (tools/fetch-hd-textures.sh)
-const HD = new Set(['leafy_grass', 'forest_ground_04', 'brown_mud_leaves_01', 'rock_boulder_dry', 'pine_bark', 'bark_brown_02', 'wood_trunk_wall', 'roof_planks', 'wood_planks']);
+const HD = new Set(['leafy_grass', 'forest_ground_04', 'brown_mud_leaves_01', 'rock_boulder_dry', 'pine_bark', 'bark_brown_02', 'wood_trunk_wall', 'roof_planks', 'wood_planks', 'snow_02', 'dry_decay_leaves']);
 
 function loadOne(file, srgb, anisotropy, hd = false) {
   const useKtx = !hd && ktx2 && manifest.ktx2.includes(file);

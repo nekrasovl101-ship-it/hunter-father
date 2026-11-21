@@ -34,6 +34,7 @@ export class SkySystem {
       uTime: { value: 0 },
       uNight: { value: 0 },
       uCover: { value: 0 },
+      uEnvPass: { value: 0 },
     };
     const skyMat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -47,7 +48,7 @@ export class SkySystem {
         }`,
       fragmentShader: /* glsl */`
         uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uMoonDir;
-        uniform float uTime, uNight, uCover;
+        uniform float uTime, uNight, uCover, uEnvPass;
         varying vec3 vDir;
         float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float vn(vec2 p) {
@@ -62,7 +63,7 @@ export class SkySystem {
           col = mix(col, uHorizon * 0.8, smoothstep(0.0, -0.2, d.y));
           float sunUp = smoothstep(-0.12, 0.02, uSunDir.y);
           float s = max(dot(d, uSunDir), 0.0);
-          col += uSunColor * (pow(s, 900.0) * 6.0 * sunUp + pow(s, 12.0) * 0.35 + pow(s, 3.0) * 0.12) * sunUp * (1.0 - uCover * 0.85);
+          col += uSunColor * (pow(s, 900.0) * 6.0 * sunUp * (1.0 - uEnvPass) + pow(s, 12.0) * 0.35 + pow(s, 3.0) * 0.12) * sunUp * (1.0 - uCover * 0.85);
           // звёзды и луна
           if (uNight > 0.01 && d.y > 0.0) {
             vec2 sp = d.xz / (d.y + 0.3) * 420.0;
@@ -94,6 +95,17 @@ export class SkySystem {
     this.dome.frustumCulled = false;
     this.dome.renderOrder = -1;
     scene.add(this.dome);
+
+    // освещение от неба (IBL): небо рендерится в кубическую карту → PMREM → scene.environment.
+    // Все PBR-материалы (земля, дома, машины, ружьё) получают рассеянный свет и блики от неба.
+    this.ibl = !!preset.antialias;
+    if (this.ibl) {
+      this.envScene = new THREE.Scene();
+      const d = new THREE.Mesh(this.dome.geometry, skyMat);
+      d.scale.setScalar(0.05);
+      this.envScene.add(d);
+      this._envT = 99;
+    }
 
     this.hemi = new THREE.HemisphereLight();
     scene.add(this.hemi);
@@ -157,7 +169,7 @@ export class SkySystem {
     this.sun.intensity = si;
     this.hemi.color.copy(grey(C(a.hs, b.hs), overcast * 0.6));
     this.hemi.groundColor.copy(C(a.hg, b.hg));
-    this.hemi.intensity = (a.hi + (b.hi - a.hi) * k) * (1 + overcast * 0.35);
+    this.hemi.intensity = (a.hi + (b.hi - a.hi) * k) * (1 + overcast * 0.35) * (this.ibl ? 0.85 : 1);
     this.light = THREE.MathUtils.clamp(this.hemi.intensity * 0.9 + si * 0.22, 0.08, 1.15);
 
     this.scene.fog.color.copy(hor);
@@ -170,13 +182,13 @@ export class SkySystem {
   // Материал для дальних гор: цвет неба в этом направлении (воздушная перспектива)
   farMaterial(viewDist) {
     return new THREE.ShaderMaterial({
-      uniforms: { ...this.uniforms, uLightDir: { value: this.sunDir }, uFogColor: { value: this.scene.fog.color }, uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 } },
+      uniforms: { ...this.uniforms, uWinter: { value: this.winter ? 1 : 0 }, uLightDir: { value: this.sunDir }, uFogColor: { value: this.scene.fog.color }, uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 } },
       vertexShader: /* glsl */`
         varying vec3 vW; varying vec3 vN;
         void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vN = normal; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
         uniform vec3 uZenith, uHorizon, uSunColor, uFogColor, uLightDir;
-        uniform float uNear, uFar, uNight;
+        uniform float uNear, uFar, uNight, uWinter;
         varying vec3 vW; varying vec3 vN;
         float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -193,7 +205,8 @@ export class SkySystem {
           vec3 snow = vec3(0.86, 0.89, 0.94);
           float rockK = clamp(smoothstep(0.35, 0.6, slope + nz * 0.2) + smoothstep(120.0, 190.0, vW.y + nz * 30.0), 0.0, 1.0);
           vec3 col = mix(forest, rock, rockK);
-          float snowK = smoothstep(195.0, 235.0, vW.y + nz * 40.0) * (1.0 - smoothstep(0.55, 0.8, slope));
+          float snowLine = mix(195.0, 20.0, uWinter);
+          float snowK = smoothstep(snowLine, snowLine + 40.0, vW.y + nz * 40.0) * (1.0 - smoothstep(0.55, 0.8, slope));
           col = mix(col, snow, snowK);
           // освещение: солнце + небо
           float ndl = max(dot(n, uLightDir), 0.0);
@@ -207,6 +220,24 @@ export class SkySystem {
           #include <colorspace_fragment>
         }`,
     });
+  }
+
+  // перестраиваем карту окружения не чаще раза в 1.5 с (и сразу при сильной смене погоды/времени)
+  updateEnv(renderer, dt) {
+    if (!this.ibl) return;
+    this._envT += dt;
+    const sig = this.hours * 0.5 + this.weather.cloud + this.weather.rain + this.weather.snow + this.weather.fog;
+    if (this._envT < 1.5 && Math.abs(sig - (this._envSig ?? -9)) < 0.15) return;
+    if (this._envT < 0.3) return;
+    this._envT = 0; this._envSig = sig;
+    this.pmrem ||= new THREE.PMREMGenerator(renderer);
+    this.uniforms.uEnvPass.value = 1;
+    const rt = this.pmrem.fromScene(this.envScene, 0, 0.01, 100);
+    this.uniforms.uEnvPass.value = 0;
+    this.envRT?.dispose();
+    this.envRT = rt;
+    this.scene.environment = rt.texture;
+    this.scene.environmentIntensity = 0.75;
   }
 
   // Тень следует за игроком; сдвиг кратен текселю — чтобы тени не «дрожали»

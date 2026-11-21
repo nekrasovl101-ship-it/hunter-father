@@ -29,6 +29,15 @@ export class Ground {
 const FRAG_PRELUDE = /* glsl */`
 uniform sampler2D tForestA, tMudA, tRockA, tMeadowA;
 uniform vec4 uSeason;
+#ifdef HAS_SNOW
+uniform sampler2D tSnowA, tSnowN, tSnowR;
+#endif
+#ifdef HAS_LEAVES
+uniform sampler2D tLeafA, tLeafN, tLeafR;
+#endif
+float tHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float tNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(tHash(i), tHash(i + vec2(1, 0)), f.x), mix(tHash(i + vec2(0, 1)), tHash(i + vec2(1, 1)), f.x), f.y); }
 uniform sampler2D tGrassR, tForestR, tMudR, tRockR;
 #ifdef USE_NORMALMAP
 uniform sampler2D tForestN, tMudN, tRockN;
@@ -63,30 +72,87 @@ float dry = smoothstep(0.45, 0.8, macro);
 colG = mix(colG, meadow * vec3(1.05, 1.0, 0.8), dry * 0.55);
 vec3 colF = texture2D(tForestA, uvF).rgb;
 vec3 colM = texture2D(tMudA, uvM).rgb;
-vec3 colR = texture2D(tRockA, uvR).rgb;
+vec3 colR = texture2D(tRockA, uvR).rgb * vec3(0.66, 0.65, 0.63);
 vec4 lum = vec4(dot(colG, vec3(0.33)), dot(colF, vec3(0.33)), dot(colM, vec3(0.33)), dot(colR, vec3(0.33)));
 vec4 sw = heightBlend(splatBase(), lum * 1.6);
 vec3 alb = colG * sw.x + colF * sw.y + colM * sw.z + colR * sw.w;
 alb *= 0.82 + 0.36 * macro;
-// времена года: осенью трава жухнет, весной сочнее, зимой — снег
+// времена года: осенью трава жухнет и лежат опавшие листья, весной сочнее, зимой — снег
 float gl = dot(colG, vec3(0.33));
 vec3 autumnG = mix(vec3(gl) * vec3(1.2, 0.92, 0.45), colF, 0.4);
 alb += sw.x * (autumnG - colG) * uSeason.x * 0.8;
 alb += sw.x * colG * vec3(-0.08, 0.14, -0.1) * uSeason.z;
-float sn = uSeason.y * smoothstep(0.25, 0.6, 1.0 - sw.w * 0.9 + (macro - 0.5) * 0.5) * (1.0 - sw.z * 0.6);
-alb = mix(alb, vec3(0.82, 0.85, 0.9) * (0.92 + 0.08 * lum.x), sn);
-// мокрая земля темнее
+float leafK = 0.0;
+#ifdef HAS_LEAVES
+vec2 uvL = wuv * 0.55;
+vec3 colL = texture2D(tLeafA, uvL).rgb;
+leafK = clamp((sw.y * 0.95 + sw.x * 0.55 * smoothstep(0.35, 0.7, tNoise(vTerrWorld.xz * 0.07))) * (1.0 - sw.z) * (1.0 - sw.w), 0.0, 1.0);
+leafK = smoothstep(0.2, 0.6, leafK + (dot(colL, vec3(0.33)) - 0.3) * 0.6);
+alb = mix(alb, colL * 1.05, leafK);
+#endif
+// снег: та же маска, что и толщина слоя на CPU, + рваный край по рельефу текстуры
+float sn = 0.0;
+vec2 uvS = wuv * 0.42;
+#ifdef HAS_SNOW
+vec3 colS = texture2D(tSnowA, uvS).rgb;
+colS = mix(colS, vec3(0.9, 0.92, 0.95), 0.35 + 0.25 * smoothstep(10.0, 60.0, camDist));
+// зимой нет зелени: всё, что не под снегом, — жухлое; двор и дороги — притоптанный тонкий снег
+alb = mix(alb, autumnG * 0.75, 0.85);
+float cover = max(0.0, (1.0 - vSplat.y * 0.75) * (1.0 - vSplat.z * 0.85) * (0.75 + 0.5 * vSplat.w) * (1.0 - vSplat.x * 0.3));
+sn = smoothstep(0.05, 0.35, cover + (dot(colS, vec3(0.33)) - 0.75) * 0.6 + (tNoise(vTerrWorld.xz * 0.5) - 0.5) * 0.25);
+alb = mix(alb, colS * vec3(0.97, 0.99, 1.03), sn);
+#endif
+// мокрая земля темнее, в низинах — лужи
+float puddle = uSeason.w * (1.0 - sn) * (sw.z + sw.y * 0.5 + sw.x * 0.3) * smoothstep(0.64, 0.7, tNoise(vTerrWorld.xz * 0.11) * 0.7 + tNoise(vTerrWorld.xz * 0.43) * 0.3) * (1.0 - sw.w) * (1.0 - sw.y * 0.6);
 alb *= 1.0 - uSeason.w * 0.32 * (1.0 - sn);
+alb = mix(alb, alb * 0.35, puddle);
 diffuseColor.rgb *= alb;
 `;
 
 const ROUGH_FRAGMENT = /* glsl */`
 float roughnessFactor = roughness * (texture2D(tGrassR, uvG).g * sw.x + texture2D(tForestR, uvF).g * sw.y
   + texture2D(tMudR, uvM).g * sw.z + texture2D(tRockR, uvR).g * sw.w);
-roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.45, uSeason.w);
+// земля, трава, листья — матовые (иначе небо даёт белёсый блеск); мокрое — чуть глаже
+roughnessFactor = max(roughnessFactor, 0.85);
+roughnessFactor = mix(roughnessFactor, 0.62, uSeason.w);
+#ifdef HAS_LEAVES
+roughnessFactor = mix(roughnessFactor, max(texture2D(tLeafR, uvL).g, 0.8), leafK);
+#endif
+#ifdef HAS_SNOW
+roughnessFactor = mix(roughnessFactor, texture2D(tSnowR, uvS).g * 0.9, sn);
+#endif
+roughnessFactor = mix(roughnessFactor, 0.04, puddle);
+`;
+// искры на снегу: редкие кристаллы, вспыхивающие при определённом угле к солнцу и камере
+const SPARKLE = /* glsl */`
+#include <emissivemap_fragment>
+#ifdef HAS_SNOW
+{
+  vec2 cell = floor(vTerrWorld.xz * 38.0);
+  float r = tHash(cell);
+  vec3 vdir = normalize(cameraPosition - vTerrWorld);
+  float ph = tHash(cell + 3.1) * 6.283 + dot(vdir, vec3(31.0, 17.0, 23.0));
+  float glint = step(0.985, r) * pow(max(sin(ph), 0.0), 40.0) * sn * (1.0 - smoothstep(6.0, 30.0, camDist));
+  #if NUM_DIR_LIGHTS > 0
+  totalEmissiveRadiance += directionalLights[0].color * glint * 3.0;
+  #endif
+}
+#endif
 `;
 
-const NORMAL_SAMPLE = `(texture2D(normalMap, uvG) * sw.x + texture2D(tForestN, uvF) * sw.y + texture2D(tMudN, uvM) * sw.z + texture2D(tRockN, uvR) * sw.w)`;
+const NORMAL_SAMPLE = (snow, leaves) => {
+  let e = `(texture2D(normalMap, uvG) * sw.x + texture2D(tForestN, uvF) * sw.y + texture2D(tMudN, uvM) * sw.z + texture2D(tRockN, uvR) * sw.w)`;
+  if (leaves) e = `mix(${e}, texture2D(tLeafN, uvL), leafK)`;
+  if (snow) e = `mix(${e}, texture2D(tSnowN, uvS), sn)`;
+  return `mix(${e}, vec4(0.5, 0.5, 1.0, 1.0), puddle)`; // в луже поверхность гладкая
+};
+
+// толщина снега и где он лежит (то же самое считает шейдер по splat)
+export const SNOW_DEPTH = 0.32;
+function snowCover(sp) {
+  const [forest, mud, rock, macro] = sp;
+  return Math.max(0, (1 - mud * 1.3) * (1 - rock * 0.85) * (0.75 + 0.5 * macro) * (1 - forest * 0.3));
+}
 
 export function createTerrain(preset, sets, shared) {
   const seg = preset.terrainSeg;
@@ -100,6 +166,7 @@ export function createTerrain(preset, sets, shared) {
   // текстура для травы: R = высота, G = плотность травы
   const hm = new Uint16Array(n * n * 4);
   const toHalf = THREE.DataUtils.toHalfFloat;
+  const winter = shared.uSeason.value.y > 0.5;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const h = ground.h[i];
@@ -107,6 +174,12 @@ export function createTerrain(preset, sets, shared) {
     uv.setXY(i, x / 4, z / 4);
     const sp = splatAt(x, z, h, slopeAt(x, z));
     splat.set(sp, i * 4);
+    // зимой — толстый слой снега (кроме дорог, двора, берегов и скал); по нему ходят
+    if (winter) {
+      const depth = SNOW_DEPTH * snowCover(sp);
+      ground.h[i] = h + depth;
+      pos.setY(i, h + depth);
+    }
     hm[i * 4] = toHalf(h);
     hm[i * 4 + 1] = toHalf(grassDensityAt(x, z, sp));
     hm[i * 4 + 2] = toHalf(sp[0]);
@@ -125,6 +198,9 @@ export function createTerrain(preset, sets, shared) {
     roughness: 1, metalness: 0,
   });
   if (preset.normalMaps) mat.normalScale.set(0.9, 0.9);
+  mat.envMapIntensity = 0.55;
+  if (sets.snow) mat.defines = { ...mat.defines, HAS_SNOW: '' };
+  if (sets.leaves) mat.defines = { ...mat.defines, HAS_LEAVES: '' };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, {
       tMeadowA: { value: sets.meadow.albedo },
@@ -137,11 +213,14 @@ export function createTerrain(preset, sets, shared) {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 splat;\nvarying vec4 vSplat;\nvarying vec3 vTerrWorld;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = splat;\nvTerrWorld = (modelMatrix * vec4(position, 1.0)).xyz;');
+    if (sets.snow) Object.assign(sh.uniforms, { tSnowA: { value: sets.snow.albedo }, tSnowN: { value: sets.snow.normal }, tSnowR: { value: sets.snow.rough } });
+    if (sets.leaves) Object.assign(sh.uniforms, { tLeafA: { value: sets.leaves.albedo }, tLeafN: { value: sets.leaves.normal }, tLeafR: { value: sets.leaves.rough } });
     sh.fragmentShader = sh.fragmentShader
       .replace('void main() {', FRAG_PRELUDE)
       .replace('#include <map_fragment>', MAP_FRAGMENT)
       .replace('#include <roughnessmap_fragment>', ROUGH_FRAGMENT)
-      .replaceAll('texture2D( normalMap, vNormalMapUv )', NORMAL_SAMPLE);
+      .replace('#include <emissivemap_fragment>', SPARKLE)
+      .replaceAll('texture2D( normalMap, vNormalMapUv )', NORMAL_SAMPLE(!!sets.snow, !!sets.leaves));
   };
 
   const mesh = new THREE.Mesh(geo, mat);

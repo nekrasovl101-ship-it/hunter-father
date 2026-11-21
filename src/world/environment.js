@@ -84,66 +84,135 @@ export class Environment {
   }
 }
 
-// Дождь (штрихи) и снег (хлопья) вокруг камеры — одна геометрия, движение в шейдере
+// Осадки вокруг камеры (движение целиком в шейдере, геометрия не меняется):
+//  • дождь — тонкие штрихи по направлению падения;
+//  • снег — мягкие круглые хлопья разного размера, кружатся;
+//  • брызги — расходящиеся колечки на земле (высота из карты рельефа).
 export class Precipitation {
-  constructor(scene, preset) {
-    const N = preset.post ? 9000 : preset.grass > 9000 ? 5000 : 2500;
-    const pos = new Float32Array(N * 2 * 3);
-    const end = new Float32Array(N * 2);
-    for (let i = 0; i < N; i++) {
-      const x = Math.random(), y = Math.random(), z = Math.random();
-      for (let j = 0; j < 2; j++) { pos.set([x, y, z], (i * 2 + j) * 3); end[i * 2 + j] = j; }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aEnd', new THREE.BufferAttribute(end, 1));
-    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+  constructor(scene, preset, heightTex) {
+    const big = preset.post ? 1 : preset.grass > 9000 ? 0.6 : 0.3;
     this.uniforms = {
       uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uRain: { value: 0 }, uSnow: { value: 0 },
-      uColor: { value: new THREE.Color(0.7, 0.75, 0.8) },
+      uColor: { value: new THREE.Color(0.7, 0.75, 0.8) }, uHeight: { value: heightTex },
+      uHalf: { value: 400 }, uWorld: { value: 800 }, uPx: { value: 1 },
     };
-    const mat = new THREE.ShaderMaterial({
-      uniforms: this.uniforms, transparent: true, depthWrite: false,
+    const u = this.uniforms;
+
+    // --- дождь
+    const NR = Math.round(9000 * big);
+    const rp = new Float32Array(NR * 2 * 3), re = new Float32Array(NR * 2);
+    for (let i = 0; i < NR; i++) { const x = Math.random(), y = Math.random(), z = Math.random(); for (let j = 0; j < 2; j++) { rp.set([x, y, z], (i * 2 + j) * 3); re[i * 2 + j] = j; } }
+    const rg = new THREE.BufferGeometry();
+    rg.setAttribute('position', new THREE.BufferAttribute(rp, 3));
+    rg.setAttribute('aEnd', new THREE.BufferAttribute(re, 1));
+    this.rain = new THREE.LineSegments(rg, new THREE.ShaderMaterial({
+      uniforms: u, transparent: true, depthWrite: false,
       vertexShader: /* glsl */`
         attribute float aEnd;
-        uniform float uTime, uRain, uSnow; uniform vec3 uCam;
+        uniform float uTime, uRain; uniform vec3 uCam;
         varying float vA; varying float vEnd;
         void main() {
-          const vec3 BOX = vec3(44.0, 26.0, 44.0);
+          const vec3 BOX = vec3(36.0, 22.0, 36.0);
           vec3 p = position * BOX;
-          float snow = step(uRain, uSnow);
-          float speed = mix(17.0, 1.6, snow);
-          vec2 wind = mix(vec2(2.2, 0.8), vec2(0.6, 0.3), snow);
-          p.y -= uTime * speed * (0.85 + position.x * 0.3);
-          p.xz += wind * uTime + snow * vec2(sin(uTime * 0.9 + position.z * 40.0), cos(uTime * 0.7 + position.x * 40.0)) * 0.6;
-          // заворачиваем в коробку вокруг камеры
+          float speed = 16.0 + position.x * 5.0;
+          vec2 wind = vec2(2.0, 0.7);
+          p.y -= uTime * speed; p.xz += wind * uTime;
           vec3 rel = mod(p - uCam + BOX * 0.5, BOX) - BOX * 0.5;
-          vec3 w = uCam + rel;
-          // хвост капли — по направлению движения
-          w -= aEnd * mix(vec3(wind.x, -speed, wind.y) * 0.032, vec3(0.11, 0.13, 0.05), snow);
-          float amount = max(uRain, uSnow);
-          float lim = step(position.y, amount); // плотность
-          vA = lim * (1.0 - smoothstep(10.0, 22.0, length(rel))) * mix(0.35, 0.9, snow);
+          vec3 w = uCam + rel - aEnd * vec3(wind.x, -speed, wind.y) * 0.028;
+          vA = step(position.y, uRain) * (1.0 - smoothstep(6.0, 18.0, length(rel))) * 0.28;
           vEnd = aEnd;
           gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
         }`,
       fragmentShader: /* glsl */`
         uniform vec3 uColor; varying float vA; varying float vEnd;
-        void main() { if (vA < 0.01) discard; gl_FragColor = vec4(uColor, vA * (1.0 - vEnd * 0.7)); }`,
-    });
-    this.mesh = new THREE.LineSegments(geo, mat);
-    this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 8;
-    scene.add(this.mesh);
+        void main() { if (vA < 0.005) discard; gl_FragColor = vec4(uColor * 1.1, vA * (1.0 - vEnd * 0.8)); }`,
+    }));
+
+    // --- снег
+    const NS = Math.round(14000 * big);
+    const sp = new Float32Array(NS * 3);
+    for (let i = 0; i < NS * 3; i++) sp[i] = Math.random();
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    this.snow = new THREE.Points(sg, new THREE.ShaderMaterial({
+      uniforms: u, transparent: true, depthWrite: false,
+      vertexShader: /* glsl */`
+        uniform float uTime, uSnow, uPx; uniform vec3 uCam;
+        varying float vA;
+        void main() {
+          const vec3 BOX = vec3(40.0, 24.0, 40.0);
+          vec3 p = position * BOX;
+          float sz = 0.6 + pow(fract(position.x * 91.7), 3.0) * 2.4;      // большинство мелких, редкие — крупные хлопья
+          p.y -= uTime * (0.9 + sz * 0.25);
+          p.xz += vec2(0.7, 0.25) * uTime;
+          float ph = position.z * 60.0;
+          p.x += sin(uTime * 0.8 + ph) * 0.7; p.z += cos(uTime * 0.6 + ph * 1.3) * 0.7;
+          vec3 rel = mod(p - uCam + BOX * 0.5, BOX) - BOX * 0.5;
+          vec4 mv = viewMatrix * vec4(uCam + rel, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_PointSize = sz * 0.035 * uPx * projectionMatrix[1][1] * 600.0 / max(-mv.z, 0.3);
+          vA = step(position.y, uSnow) * (1.0 - smoothstep(12.0, 20.0, length(rel))) * smoothstep(0.3, 1.2, -mv.z);
+        }`,
+      fragmentShader: /* glsl */`
+        uniform vec3 uColor; varying float vA;
+        void main() {
+          float d = length(gl_PointCoord - 0.5);
+          float a = smoothstep(0.5, 0.15, d) * vA;
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(mix(uColor, vec3(1.0), 0.55), a * 0.9);
+        }`,
+    }));
+
+    // --- брызги на земле
+    const NP = Math.round(1800 * big);
+    const pp = new Float32Array(NP * 3);
+    for (let i = 0; i < NP * 3; i++) pp[i] = Math.random();
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(pp, 3));
+    this.splash = new THREE.Points(pg, new THREE.ShaderMaterial({
+      uniforms: u, transparent: true, depthWrite: false,
+      vertexShader: /* glsl */`
+        uniform float uTime, uRain, uPx, uHalf, uWorld; uniform vec3 uCam; uniform sampler2D uHeight;
+        varying float vA; varying float vT;
+        void main() {
+          float life = 0.45;
+          float t = uTime / life + position.z * 7.0;
+          float cyc = floor(t); vT = fract(t);
+          // каждое «рождение» — новая случайная точка в радиусе 14 м
+          vec2 r = fract(vec2(sin(cyc * 12.9 + position.x * 78.2), sin(cyc * 39.3 + position.y * 11.1)) * 43758.5) * 28.0 - 14.0;
+          vec2 xz = uCam.xz + r;
+          float h = texture2D(uHeight, (xz + uHalf) / uWorld).r;
+          vec4 mv = viewMatrix * vec4(xz.x, h + 0.08, xz.y, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_PointSize = (0.05 + vT * 0.12) * uPx * projectionMatrix[1][1] * 600.0 / max(-mv.z, 0.3);
+          vA = step(position.y, uRain) * (1.0 - vT) * (1.0 - smoothstep(6.0, 14.0, length(r)));
+        }`,
+      fragmentShader: /* glsl */`
+        uniform vec3 uColor; varying float vA; varying float vT;
+        void main() {
+          vec2 c = gl_PointCoord - 0.5; c.y *= 2.6;           // приплюснутое колечко
+          float d = length(c);
+          float ring = smoothstep(0.08, 0.0, abs(d - 0.32 * (0.4 + vT * 0.6)));
+          float a = ring * vA * 0.28;
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(uColor, a);
+        }`,
+    }));
+
+    for (const m of [this.rain, this.snow, this.splash]) { m.frustumCulled = false; m.renderOrder = 8; scene.add(m); }
   }
 
-  update(dt, cam, weather, lightColor) {
+  // snowGround — зимой брызг нет
+  update(dt, cam, weather, lightColor, pixelRatio = 1) {
     const u = this.uniforms;
     u.uTime.value += dt;
     u.uCam.value.copy(cam);
     u.uRain.value = weather.rain;
     u.uSnow.value = weather.snow;
+    u.uPx.value = pixelRatio;
     u.uColor.value.copy(lightColor);
-    this.mesh.visible = weather.rain > 0.02 || weather.snow > 0.02;
+    this.rain.visible = weather.rain > 0.02;
+    this.splash.visible = weather.rain > 0.05;
+    this.snow.visible = weather.snow > 0.02;
   }
 }
