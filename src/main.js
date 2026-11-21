@@ -283,6 +283,10 @@ class Game {
   }
 
   // ---------- авто-разрешение: держим плавность, снижая/повышая чёткость картинки ----------
+  // Чёткость картинки НЕ снижается никогда (иначе «пиксели»). Если кадров мало —
+  // по шагам экономим там, где глазу почти не видно, и возвращаем, когда снова тянет:
+  //  1 — отражения в воде обновляются через кадр; 2 — дальняя трава реже на 25%;
+  //  3 — тени через 2–3 кадра; 4 — средняя трава реже, отражения раз в 3 кадра; 5 — трава у ног реже
   adaptResolution(dt) {
     this._fpsAcc += dt; this._fpsN++;
     this._resT += dt;
@@ -290,25 +294,26 @@ class Game {
     const fps = this._fpsN / this._fpsAcc;
     this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
     const target = isTouch ? 40 : 55;
-    let s = this.resScale;
-    // если прошлое снижение чёткости не дало прироста — упираемся не в пиксели
-    // (лимит 30 FPS в энергосбережении, слабый процессор): возвращаем чёткость и не трогаем 30 с
-    if (this._lastDrop && fps < this._lastDrop.fps * 1.04) {
-      s = this._lastDrop.scale; this._lastDrop = null; this._lockT = performance.now() + 30000;
-    } else {
-      this._lastDrop = null;
-      const locked = performance.now() < (this._lockT || 0);
-      if (fps < target - 3 && !locked) {
-        const ns = Math.max(isTouch ? 0.72 : 0.6, s * (fps < target * 0.7 ? 0.88 : 0.94)); // не опускаемся до «пикселей»
-        if (ns < s) { this._lastDrop = { fps, scale: s }; s = ns; }
-      } else if (fps > target + 8 || (fps > 58 && s < 1)) s = Math.min(1, s * 1.06);
+    let lvl = this.qLevel || 0;
+    // если прошлый шаг не дал прироста (лимит 30 FPS в энергосбережении) — откатываем его
+    if (this._lastStep && fps < this._lastStep.fps * 1.04) { lvl = this._lastStep.lvl; this._lastStep = null; this._lockT = performance.now() + 30000; }
+    else {
+      this._lastStep = null;
+      if (fps < target - 3 && lvl < 5 && performance.now() > (this._lockT || 0)) { this._lastStep = { fps, lvl }; lvl++; }
+      else if (fps > target + 10 && lvl > 0) lvl--;
     }
-    if (Math.abs(s - this.resScale) > 0.01) {
-      this.resScale = s;
-      this.renderer.setPixelRatio(this.basePixelRatio * s);
-      this.renderer.setSize(innerWidth, innerHeight);
-      this.post?.setSize(innerWidth, innerHeight);
-    }
+    if (lvl !== this.qLevel) { this.qLevel = lvl; this.applyQuality(lvl); }
+  }
+
+  applyQuality(lvl) {
+    this.mirrorEvery = lvl >= 4 ? 3 : lvl >= 1 ? 2 : 1;
+    this.preset.shadowEvery = Math.max(this.baseShadowEvery ||= this.preset.shadowEvery || 1, lvl >= 3 ? 3 : lvl >= 1 ? 2 : 1);
+    const L = this.grass.lod;
+    const k = (layer, f) => { if (layer) layer.geometry.instanceCount = Math.round(layer.fullCount * f); };
+    k(L.far, lvl >= 2 ? 0.75 : 1);
+    k(L.mid, lvl >= 4 ? 0.8 : 1);
+    k(L.flowers, lvl >= 4 ? 0.7 : 1);
+    k(L.near, lvl >= 5 ? 0.75 : 1);
   }
 
   // ---------- инвентарь ----------
@@ -686,11 +691,11 @@ class Game {
     this.updateHouseLight(dt);
     this.phone.update(dt, this.phoneState());
 
-    if (this.water.mirror && riverDist(cp.x, cp.z) < this.preset.viewDist && this.riverInView(cp)) {
+    if (this.water.mirror && this._frameN % (this.mirrorEvery || 1) === 0 && riverDist(cp.x, cp.z) < this.preset.viewDist && this.riverInView(cp)) {
       this.water.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root, this.puddleMesh].filter(Boolean));
     }
     // отражение в ближайшей луже (своя плоскость на её уровне) — только если она в кадре
-    if (this.puddleMesh?.mirror) {
+    if (this.puddleMesh?.mirror && this._frameN % (this.mirrorEvery || 1) === 0) {
       const lvl = this.puddleMesh.nearestLevel(cp);
       this._frustum ||= new THREE.Frustum(); this._pm ||= new THREE.Matrix4();
       this.camera.updateMatrixWorld(); this._frustum.setFromProjectionMatrix(this._pm.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
@@ -712,7 +717,7 @@ class Game {
   updateHud(dt) {
     const hud = this.hud;
     hud.update(dt, { gun: this.gun, yaw: this.driving ? this.driving.heading + Math.PI : this.player.yaw, score: this.score, kills: this.kills, showFps: settings.showFps });
-    if (settings.showFps) hud.fps.textContent = hud.fps.textContent.replace(/ ·.*$/, '') + ` · ${this.renderer.info.render.calls} dc · ${Math.round(this.resScale * 100)}%`;
+    if (settings.showFps) hud.fps.textContent = hud.fps.textContent.replace(/ ·.*$/, '') + ` · ${this.renderer.info.render.calls} dc · Q${this.qLevel || 0}`;
     $('#health-bar').style.width = `${this.player.health}%`;
     if (this.net) {
       const tag = `Комната <b>${this.net.code}</b> · ${this.roster.size}/${MAX_PLAYERS} · ${Math.round(this.net.rtt)} мс`;

@@ -76,6 +76,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
   }
   geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
   geo.instanceCount = count;
+  // (полное число — чтобы авто-качество могло временно проредить и вернуть)
 
   const uniforms = {
     uHeight: { value: heightTex },
@@ -180,6 +181,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
   mesh.frustumCulled = false;
   mesh.matrixAutoUpdate = false;
   mesh.uniforms = uniforms;
+  mesh.fullCount = count;
   return mesh;
 }
 
@@ -193,17 +195,20 @@ export function createGrass(preset, heightTex, shared) {
   const flowers = makeLayer(flowerGeo(), Math.round(preset.grass * 0.12), tile, preset.grassDist * 0.8, heightTex, shared, rnd, true);
   group.add(grass, flowers);
   const layers = [grass, flowers];
+  group.lod = { mid: grass, flowers };
   // густой подробный слой у ног (до ~20 м)
   if (preset.grassNear) {
     const near = makeLayer(bladeClump(rnd, 11, true), preset.grassNear, 40, 20, heightTex, shared, rnd, false, true);
     group.add(near);
     layers.push(near);
+    group.lod.near = near;
   }
   // дальний слой: те же пучки, но из 3 широких травинок — вдали деталей не видно, а вершин в 3 раза меньше
   if (preset.grassFar) {
     const far = makeLayer(bladeClump(rnd, 3, fine, 2.6), preset.grassFar, preset.grassFarDist * 2.1, preset.grassFarDist, heightTex, shared, rnd, false, fine, preset.grassDist * 0.85);
     group.add(far);
     layers.push(far);
+    group.lod.far = far;
   }
   group.update = (camPos, playerPos) => {
     for (const m of layers) {
