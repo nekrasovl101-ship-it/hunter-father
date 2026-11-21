@@ -53,13 +53,20 @@ class Game {
   async init(onProgress) {
     const preset = (this.preset = PRESETS[settings.quality] || PRESETS.medium);
     const canvas = $('#game');
-    const renderer = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.antialias, powerPreference: 'high-performance' }));
+    // если видеокарта занята (много вкладок с 3D) — пробуем ещё раз с щадящими настройками
+    let renderer;
+    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.antialias, powerPreference: 'high-performance' }); }
+    catch {
+      try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false }); }
+      catch { throw new Error('WEBGL'); }
+    }
+    this.renderer = renderer;
     renderer.setPixelRatio(Math.min(devicePixelRatio, preset.pixelRatio));
     renderer.setSize(innerWidth, innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
     renderer.shadowMap.enabled = preset.shadows;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.type = preset.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 
     const scene = (this.scene = new THREE.Scene());
     const camera = (this.camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 1500));
@@ -67,7 +74,7 @@ class Game {
 
     onProgress(0.05, 'Текстуры…');
     await initTextures(renderer);
-    const aniso = Math.min(renderer.capabilities.getMaxAnisotropy(), preset.antialias ? 8 : 4);
+    const aniso = Math.min(renderer.capabilities.getMaxAnisotropy(), preset.aniso || (preset.antialias ? 8 : 4));
     const nm = preset.normalMaps;
     const keys = ['grass', 'meadow', 'forest', 'mud', 'rock', 'bark', 'moss', 'barkBroad', 'logs', 'roof', 'planks'];
     const loaded = await Promise.all(keys.map((k) => loadSet(k, {
@@ -545,7 +552,9 @@ function setupMenu() {
       });
     } catch (e) {
       console.error(e);
-      $('#load-label').textContent = 'Ошибка: ' + e.message;
+      $('#load-label').innerHTML = e.message === 'WEBGL' || /WebGL/i.test(e.message)
+        ? 'Браузер не дал доступ к 3D-графике (WebGL).<br>Закройте другие вкладки с 3D-играми и обновите страницу.<br>Не помогло — перезапустите браузер и проверьте, что включено<br>«Использовать аппаратное ускорение» в настройках.'
+        : 'Ошибка: ' + e.message;
       return;
     }
     $('#loading').classList.add('hidden');

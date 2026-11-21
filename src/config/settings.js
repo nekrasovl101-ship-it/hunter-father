@@ -15,6 +15,11 @@ export const PRESETS = {
     terrainSeg: 320, normalMaps: true, grass: 32000, grassDist: 50,
     treeHi: 100, viewDist: 380, shadowDist: 70,
   },
+  ultra: {
+    label: 'Ультра (не для телефонов)', pixelRatio: 2.5, antialias: true, shadows: true, shadowMap: 4096,
+    terrainSeg: 448, normalMaps: true, grass: 60000, grassDist: 72,
+    treeHi: 150, viewDist: 480, shadowDist: 100, softShadows: true, aniso: 16,
+  },
 };
 
 export const isTouch = new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
