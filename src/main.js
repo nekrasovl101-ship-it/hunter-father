@@ -22,7 +22,7 @@ import { AnimalViews } from './entities/animals.js';
 import { Hud } from './ui/hud.js';
 import { World } from '../shared/world.js';
 import { AnimalSim, SPECIES, isBlocked } from '../shared/animals.js';
-import { SITES } from '../shared/terrain.js';
+import { SITES, riverDist } from '../shared/terrain.js';
 import { Net, createRoom, leaderboard } from './net/net.js';
 import { RemoteHunters } from './entities/hunters.js';
 import { ROOM_VEHICLES, SPECIES_IDS, ANIMS, SEND_MS, CODE_LEN, MAX_PLAYERS } from '../shared/protocol.js';
@@ -92,7 +92,7 @@ class Game {
     const terrain = createTerrain(preset, sets);
     this.ground = terrain.ground;
     scene.add(terrain.mesh, terrain.far);
-    this.water = createWater();
+    this.water = createWater(terrain.heightTex, preset);
     scene.add(this.water);
     this.grass = createGrass(preset, terrain.heightTex, this.shared);
     scene.add(this.grass);
@@ -613,7 +613,10 @@ class Game {
     this.updateHouseLight(dt);
     this.phone.update(dt, this.phoneState());
 
-    if (this.post) { this.renderer.info.reset(); this.post.render(dt); } else this.renderer.render(this.scene, this.camera);
+    if (this.water.mirror && riverDist(cp.x, cp.z) < this.preset.viewDist) {
+      this.water.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root]);
+    }
+    if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunDir, this.sky.sun.color); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
 
@@ -662,9 +665,14 @@ function setupMenu() {
 
   // «Ультра» на телефоне — только после предупреждения
   const warnUltra = (sel) => sel.addEventListener('change', () => {
-    if (sel.value !== 'ultra' || !isTouch) return;
+    if (sel.value !== 'ultra') return;
+    $('#ultra-text').textContent = isTouch
+      ? 'Этот режим сделан для компьютеров с видеокартой. На телефоне лучше не включать: телефон может сильно нагреться, игра будет тормозить, а Safari может перезагрузить страницу.'
+      : 'Вы точно хотите включить «Ультру»? Это максимальная графика: отражения в воде, лучи солнца, 2K-текстуры. Компьютер может немного нагреваться и шуметь вентиляторами, нужна хорошая видеокарта.';
+    $('#ultra-cancel').textContent = isTouch ? 'Оставить «Среднюю»' : 'Оставить «Высокую»';
+    $('#ultra-ok').textContent = isTouch ? 'Всё равно включить' : 'Да, включить «Ультру»';
     $('#ultra-warn').classList.remove('hidden');
-    $('#ultra-cancel').onclick = () => { sel.value = 'medium'; $('#ultra-warn').classList.add('hidden'); sel.dispatchEvent(new Event('input')); };
+    $('#ultra-cancel').onclick = () => { sel.value = isTouch ? 'medium' : 'high'; $('#ultra-warn').classList.add('hidden'); sel.dispatchEvent(new Event('input')); };
     $('#ultra-ok').onclick = () => $('#ultra-warn').classList.add('hidden');
   });
   warnUltra(quality);

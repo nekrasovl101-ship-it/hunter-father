@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { HALF, WATER_LEVEL, RIVER_HALF, riverX } from '../../shared/terrain.js';
+import { HALF, WORLD_SIZE, WATER_LEVEL, RIVER_HALF, riverX } from '../../shared/terrain.js';
 
-// Полоса воды вдоль русла (дешевле, чем плоскость на всю карту)
-export function createWater() {
+// Река. На всех пресетах: волны, френель, блик солнца, прозрачность по глубине (видно дно
+// на мелководье), пена у берега. На «Ультре» — настоящее зеркальное отражение мира
+// (отдельный рендер сцены из «отражённой» камеры) с искажением волнами.
+export function createWater(heightTex, preset) {
   const pts = [];
   const idx = [];
   const W = RIVER_HALF + 6;
@@ -19,9 +21,11 @@ export function createWater() {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   geo.setIndex(idx);
 
+  const reflect = !!preset.post;
   const mat = new THREE.ShaderMaterial({
     transparent: true,
     fog: true,
+    defines: reflect ? { USE_REFLECT: '' } : {},
     uniforms: THREE.UniformsUtils.merge([
       THREE.UniformsLib.fog,
       {
@@ -29,16 +33,25 @@ export function createWater() {
         uSunDir: { value: new THREE.Vector3(0, 1, 0) },
         uSunColor: { value: new THREE.Color(1, 1, 1) },
         uSkyColor: { value: new THREE.Color(0.6, 0.75, 0.9) },
-        uDeep: { value: new THREE.Color(0x0e2a2a) },
+        uDeep: { value: new THREE.Color(0x0b2420) },
+        uShallow: { value: new THREE.Color(0x4a6a52) },
+        uHeight: { value: null },
+        uHalf: { value: HALF },
+        uWorld: { value: WORLD_SIZE },
+        tReflect: { value: null },
+        uTexMatrix: { value: new THREE.Matrix4() },
       },
     ]),
     vertexShader: /* glsl */`
       #include <common>
       #include <fog_pars_vertex>
+      uniform mat4 uTexMatrix;
       varying vec3 vWorld;
+      varying vec4 vRefl;
       void main() {
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorld = wp.xyz;
+        vRefl = uTexMatrix * wp;
         vec4 mvPosition = viewMatrix * wp;
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
@@ -46,31 +59,132 @@ export function createWater() {
     fragmentShader: /* glsl */`
       #include <common>
       #include <fog_pars_fragment>
-      uniform float uTime;
-      uniform vec3 uSunDir, uSunColor, uSkyColor, uDeep;
+      uniform float uTime, uHalf, uWorld;
+      uniform vec3 uSunDir, uSunColor, uSkyColor, uDeep, uShallow;
+      uniform sampler2D uHeight;
+      #ifdef USE_REFLECT
+      uniform sampler2D tReflect;
+      #endif
       varying vec3 vWorld;
-      float wave(vec2 p, vec2 d, float f, float s) { return sin(dot(p, d) * f + uTime * s); }
+      varying vec4 vRefl;
+      float h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h2(i), h2(i + vec2(1, 0)), f.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), f.x), f.y); }
+      // наклон поверхности: длинные волны + рябь, всё сносится течением
+      vec2 slope(vec2 p) {
+        vec2 g = vec2(0.0);
+        g += vec2(0.6, 0.8) * cos(dot(p, vec2(0.6, 0.8)) * 1.3 + uTime * 1.7) * 0.08;
+        g += vec2(-0.7, 0.5) * cos(dot(p, vec2(-0.7, 0.5)) * 2.7 + uTime * 2.3) * 0.05;
+        g += vec2(0.2, -0.9) * cos(dot(p, vec2(0.2, -0.9)) * 5.1 + uTime * 3.1) * 0.03;
+        vec2 q = p * 3.2 + vec2(0.0, -uTime * 1.6);
+        float e = 0.08;
+        float n0 = vn(q) + 0.5 * vn(q * 2.3 + 7.0);
+        g += vec2(vn(q + vec2(e, 0.0)) + 0.5 * vn((q + vec2(e, 0.0)) * 2.3 + 7.0) - n0,
+                  vn(q + vec2(0.0, e)) + 0.5 * vn((q + vec2(0.0, e)) * 2.3 + 7.0) - n0) / e * 0.018;
+        return g;
+      }
       void main() {
         vec2 p = vWorld.xz;
         p.y -= uTime * 1.2; // течение
-        float e = 0.05;
-        vec2 grad = vec2(0.0);
-        grad += vec2(0.6, 0.8) * cos(dot(p, vec2(0.6, 0.8)) * 1.3 + uTime * 1.7) * 0.10;
-        grad += vec2(-0.7, 0.5) * cos(dot(p, vec2(-0.7, 0.5)) * 2.7 + uTime * 2.3) * 0.06;
-        grad += vec2(0.2, -0.9) * cos(dot(p, vec2(0.2, -0.9)) * 5.1 + uTime * 3.1) * 0.035;
-        vec3 n = normalize(vec3(-grad.x, 1.0, -grad.y));
+        vec2 g = slope(p);
+        vec3 n = normalize(vec3(-g.x, 1.0, -g.y));
         vec3 v = normalize(cameraPosition - vWorld);
-        float fres = pow(1.0 - max(dot(n, v), 0.0), 4.0) * 0.85 + 0.12;
+        float ndv = max(dot(n, v), 0.0);
+        float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+
+        // глубина по карте высот рельефа: мелко — прозрачно и светлее, глубоко — тёмная вода
+        float bed = texture2D(uHeight, clamp((vWorld.xz + uHalf) / uWorld, 0.0, 1.0)).r;
+        float depth = max(${WATER_LEVEL.toFixed(2)} - bed, 0.0);
+        float dk = smoothstep(0.0, 1.2, depth);
+        vec3 body = mix(uShallow, uDeep, dk);
+
+        #ifdef USE_REFLECT
+        vec4 rc = vRefl; rc.xy += g * 0.45 * rc.w;
+        vec3 refl = texture2DProj(tReflect, rc).rgb;
+        #else
+        vec3 refl = uSkyColor;
+        #endif
         vec3 h = normalize(uSunDir + v);
-        float spec = pow(max(dot(n, h), 0.0), 180.0) * 2.5;
-        vec3 col = mix(uDeep, uSkyColor, fres) + uSunColor * spec;
-        gl_FragColor = vec4(col, 0.82 + fres * 0.15);
+        float spec = pow(max(dot(n, h), 0.0), 400.0) * 6.0 + pow(max(dot(n, h), 0.0), 60.0) * 0.25;
+        vec3 col = mix(body, refl, clamp(fres + 0.08, 0.0, 1.0)) + uSunColor * spec;
+        // пена и блики у берега
+        float foam = (1.0 - smoothstep(0.02, 0.14, depth)) * smoothstep(0.55, 0.9, vn(p * 2.5 + uTime * 0.3) + vn(p * 6.0) * 0.4);
+        col = mix(col, vec3(0.85, 0.88, 0.86), foam * 0.35);
+        float alpha = mix(0.25, 0.94, dk) + fres * 0.4 + foam * 0.5;
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
         #include <fog_fragment>
       }`,
   });
+  mat.uniforms.uHeight.value = heightTex;
   const mesh = new THREE.Mesh(geo, mat);
   mesh.renderOrder = 2;
+  if (reflect) mesh.mirror = new Mirror(mat);
   return mesh;
+}
+
+// Планарное отражение относительно плоскости воды (по мотивам three/examples Reflector)
+class Mirror {
+  constructor(mat) {
+    this.mat = mat;
+    this.rt = new THREE.WebGLRenderTarget(512, 512, { type: THREE.HalfFloatType });
+    this.cam = new THREE.PerspectiveCamera();
+    this.mat.uniforms.tReflect.value = this.rt.texture;
+    this._plane = new THREE.Plane();
+    this._clip = new THREE.Vector4();
+    this._q = new THREE.Vector4();
+    this._v = new THREE.Vector3();
+    this._t = new THREE.Vector3();
+    this._look = new THREE.Vector3();
+  }
+
+  // hide: объекты, которых не должно быть в отражении (трава, вода, ружьё)
+  render(renderer, scene, camera, hide) {
+    const size = renderer.getDrawingBufferSize(this._size || (this._size = new THREE.Vector2()));
+    const w = Math.round(size.x * 0.5), h = Math.round(size.y * 0.5);
+    if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
+    if (camera.position.y < WATER_LEVEL) return;
+
+    const cam = this.cam;
+    // позиция и направление взгляда, отражённые относительно y = WATER_LEVEL
+    cam.position.copy(camera.position); cam.position.y = 2 * WATER_LEVEL - cam.position.y;
+    camera.getWorldDirection(this._v);
+    this._look.copy(camera.position).add(this._v); this._look.y = 2 * WATER_LEVEL - this._look.y;
+    cam.up.set(0, 1, 0).applyQuaternion(camera.quaternion); cam.up.y *= -1;
+    cam.lookAt(this._look);
+    cam.near = camera.near; cam.far = camera.far; cam.fov = camera.fov; cam.aspect = camera.aspect;
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+
+    // матрица для выборки текстуры в шейдере воды
+    const tm = this.mat.uniforms.uTexMatrix.value;
+    tm.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+    tm.multiply(cam.projectionMatrix).multiply(cam.matrixWorldInverse);
+
+    // наклонная плоскость отсечения: в отражение не попадает то, что под водой
+    this._plane.setFromNormalAndCoplanarPoint(this._t.set(0, 1, 0), this._v.set(0, WATER_LEVEL, 0));
+    this._plane.applyMatrix4(cam.matrixWorldInverse);
+    this._clip.set(this._plane.normal.x, this._plane.normal.y, this._plane.normal.z, this._plane.constant);
+    const pm = cam.projectionMatrix, q = this._q;
+    q.x = (Math.sign(this._clip.x) + pm.elements[8]) / pm.elements[0];
+    q.y = (Math.sign(this._clip.y) + pm.elements[9]) / pm.elements[5];
+    q.z = -1.0;
+    q.w = (1.0 + pm.elements[10]) / pm.elements[14];
+    this._clip.multiplyScalar(2.0 / this._clip.dot(q));
+    pm.elements[2] = this._clip.x; pm.elements[6] = this._clip.y;
+    pm.elements[10] = this._clip.z + 1.0 - 0.003; pm.elements[14] = this._clip.w;
+
+    const vis = hide.map((o) => o.visible);
+    for (const o of hide) o.visible = false;
+    const prevRT = renderer.getRenderTarget();
+    const prevShadow = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.setRenderTarget(this.rt);
+    renderer.clear();
+    renderer.render(scene, cam);
+    renderer.setRenderTarget(prevRT);
+    renderer.shadowMap.autoUpdate = prevShadow;
+    hide.forEach((o, i) => { o.visible = vis[i]; });
+  }
 }

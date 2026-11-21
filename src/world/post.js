@@ -31,12 +31,43 @@ const GradeShader = {
     }`,
 };
 
+// Лучи солнца («god rays»): яркое небо вокруг солнца радиально размывается к солнцу,
+// стволы и кроны его загораживают → видны световые столбы сквозь лес.
+const RaysShader = {
+  uniforms: { tDiffuse: { value: null }, uSun: { value: new THREE.Vector2(0.5, 0.5) }, uStrength: { value: 0 }, uTint: { value: new THREE.Color(1, 0.9, 0.7) } },
+  vertexShader: GradeShader.vertexShader,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse; uniform vec2 uSun; uniform float uStrength; uniform vec3 uTint;
+    varying vec2 vUv;
+    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main(){
+      vec4 base = texture2D(tDiffuse, vUv);
+      if (uStrength < 0.001) { gl_FragColor = base; return; }
+      vec2 d = (uSun - vUv) / 48.0 * 0.9;
+      vec2 uv = vUv + d * h(vUv * 931.0);
+      float acc = 0.0, w = 1.0;
+      for (int i = 0; i < 48; i++) {
+        vec3 c = texture2D(tDiffuse, uv).rgb;
+        float l = max(dot(c, vec3(0.2126, 0.7152, 0.0722)) - 1.15, 0.0);
+        acc += min(l, 4.0) * w;
+        w *= 0.955; uv += d;
+      }
+      acc /= 48.0;
+      gl_FragColor = vec4(base.rgb + uTint * acc * uStrength, base.a);
+    }`,
+};
+
 export class Post {
   constructor(renderer, scene, camera) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(renderer, rt);
     this.composer.addPass(new RenderPass(scene, camera));
+    this.rays = new ShaderPass(RaysShader);
+    this.composer.addPass(this.rays);
+    this.camera = camera;
+    this._sp = new THREE.Vector3();
+    this._fw = new THREE.Vector3();
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.22, 0.55, 0.92);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
@@ -50,8 +81,20 @@ export class Post {
     this.composer.setSize(w, h);
   }
 
-  render(dt) {
+  // sunDir — направление на солнце, sunColor — его цвет
+  render(dt, sunDir, sunColor) {
     this.grade.uniforms.uTime.value += dt;
+    if (sunDir) {
+      const cam = this.camera;
+      const p = this._sp.copy(cam.position).addScaledVector(sunDir, 1000).project(cam);
+      const facing = cam.getWorldDirection(this._fw).dot(sunDir);
+      const u = this.rays.uniforms;
+      u.uSun.value.set(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5);
+      // сила лучей: солнце в кадре или рядом, сильнее у горизонта
+      const onScreen = Math.max(0, 1 - Math.max(Math.abs(p.x), Math.abs(p.y)) / 1.6);
+      u.uStrength.value = facing > 0 ? onScreen * Math.min(1, facing * 2) * (1.2 - sunDir.y * 0.5) * 2.2 : 0;
+      if (sunColor) u.uTint.value.copy(sunColor);
+    }
     this.composer.render(dt);
   }
 }
