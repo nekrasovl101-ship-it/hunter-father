@@ -64,20 +64,15 @@ function flowerGeo() {
   return g;
 }
 
+// Слой травы разбит на K×K кусков (свои меши, общий материал): каждый кадр рисуются
+// только куски, попадающие в кадр. Трава за спиной не считается — картинка та же, работы в 2–3 раза меньше.
 function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fine = false, inner = 0) {
-  const geo = new THREE.InstancedBufferGeometry();
-  geo.index = base.index;
-  geo.setAttribute('position', base.attributes.position);
-  geo.setAttribute('color', base.attributes.color);
-  const off = new Float32Array(count * 4);
+  const K = count > 20000 ? 6 : 4;
+  const buckets = Array.from({ length: K * K }, () => []);
   for (let i = 0; i < count; i++) {
-    off[i * 4] = rnd(); off[i * 4 + 1] = rnd();
-    off[i * 4 + 2] = rnd() * Math.PI * 2; off[i * 4 + 3] = rnd();
+    const o = [rnd(), rnd(), rnd() * Math.PI * 2, rnd()];
+    buckets[Math.min(K - 1, Math.floor(o[1] * K)) * K + Math.min(K - 1, Math.floor(o[0] * K))].push(o);
   }
-  geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
-  geo.instanceCount = count;
-  // (полное число — чтобы авто-качество могло временно проредить и вернуть)
-
   const uniforms = {
     uHeight: { value: heightTex },
     uCenter: { value: new THREE.Vector2() },
@@ -177,12 +172,42 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         #endif
         #include <opaque_fragment>`);
   };
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.frustumCulled = false;
-  mesh.matrixAutoUpdate = false;
-  mesh.uniforms = uniforms;
-  mesh.fullCount = count;
-  return mesh;
+  const layer = new THREE.Group();
+  layer.uniforms = uniforms;
+  layer.fullCount = count;
+  layer.chunks = [];
+  const cell = tile / K;
+  buckets.forEach((list, b) => {
+    if (!list.length) return;
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = base.index;
+    geo.setAttribute('position', base.attributes.position);
+    geo.setAttribute('color', base.attributes.color);
+    geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(list.flat()), 4));
+    geo.instanceCount = list.length;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.full = list.length;
+    mesh.cx = (b % K + 0.5) * cell; mesh.cz = (Math.floor(b / K) + 0.5) * cell; // центр куска внутри плитки
+    layer.add(mesh);
+    layer.chunks.push(mesh);
+  });
+  const sphere = new THREE.Sphere(new THREE.Vector3(), cell * 0.75 + 1.5);
+  // где сейчас лежит кусок (та же «заворачивающая» формула, что в шейдере) и виден ли он
+  layer.cull = (center, frustum, heightAt) => {
+    const ox = center.x - tile / 2, oz = center.z - tile / 2;
+    for (const m of layer.chunks) {
+      const x = ox + (((m.cx - ox) % tile) + tile) % tile;
+      const z = oz + (((m.cz - oz) % tile) + tile) % tile;
+      const far = Math.hypot(x - center.x, z - center.z) - cell * 0.75;
+      sphere.center.set(x, heightAt(x, z) + 0.4, z);
+      sphere.radius = cell * 0.72 + 2; // кусок + высота травы и перепад рельефа внутри куска
+      m.visible = far < dist && (!inner || far + cell * 1.5 > inner * 0.75) && frustum.intersectsSphere(sphere);
+    }
+  };
+  layer.setFraction = (f) => { for (const m of layer.chunks) m.geometry.instanceCount = Math.round(m.full * f); };
+  return layer;
 }
 
 export function createGrass(preset, heightTex, shared) {
@@ -211,10 +236,14 @@ export function createGrass(preset, heightTex, shared) {
     layers.push(far);
     group.lod.far = far;
   }
-  group.update = (camPos, playerPos) => {
+  const frustum = new THREE.Frustum(), pm = new THREE.Matrix4();
+  group.update = (camPos, playerPos, camera, heightAt) => {
+    if (camera) { camera.updateMatrixWorld(); frustum.setFromProjectionMatrix(pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)); }
     for (const m of layers) {
       m.uniforms.uCenter.value.set(camPos.x, camPos.z);
       m.uniforms.uPlayer.value.copy(playerPos);
+      if (camera && heightAt) m.cull(camPos, frustum, heightAt);
+      else for (const c of m.chunks) c.visible = true;
     }
   };
   return group;

@@ -37,7 +37,8 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 // Авто-оптимизация (незаметное снижение нагрузки при нехватке FPS) — только у «Ультры» на компьютере.
 export function getPreset(key) {
   const base = PRESETS[key] || PRESETS.medium;
-  return { shadowEvery: 1, reflectScale: 0.4, puddleMirror: true, ...base, adaptive: key === 'ultra' && !isTouch };
+  // на телефоне тени и отражения пересчитываются через кадр — глазом не видно, а нагрузка ниже
+  return { shadowEvery: 1, reflectScale: 0.4, puddleMirror: true, ...base, ...(isTouch ? { shadowEvery: 2, mirrorEvery: 2 } : {}), adaptive: key === 'ultra' && !isTouch };
 }
 
 const KEY = 'hf_settings_v1';

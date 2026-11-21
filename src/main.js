@@ -194,6 +194,7 @@ class Game {
     if (preset.post) { this.post = new Post(renderer, scene, camera, !!preset.postLite); renderer.info.autoReset = false; }
     // тени: на телефоне пересчитываются через кадр
     renderer.shadowMap.autoUpdate = false;
+    this.mirrorEvery = preset.mirrorEvery || 1;
     this._frameN = 0;
     this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
     this.resize();
@@ -329,7 +330,7 @@ class Game {
     this.mirrorEvery = lvl >= 4 ? 3 : lvl >= 1 ? 2 : 1;
     this.preset.shadowEvery = Math.max(this.baseShadowEvery ||= this.preset.shadowEvery || 1, lvl >= 3 ? 3 : lvl >= 1 ? 2 : 1);
     const L = this.grass.lod;
-    const k = (layer, f) => { if (layer) layer.geometry.instanceCount = Math.round(layer.fullCount * f); };
+    const k = (layer, f) => layer?.setFraction(f);
     k(L.far, lvl >= 2 ? 0.75 : 1);
     k(L.mid, lvl >= 4 ? 0.8 : 1);
     k(L.flowers, lvl >= 4 ? 0.7 : 1);
@@ -738,7 +739,7 @@ class Game {
       this.views.sync(this.sim.animals, dt, this.camera);
     }
 
-    this.grass.update(cp, p);
+    this.grass.update(cp, p, this.camera, this._hFn ||= (x, z) => this.ground.sample(x, z));
     this.trees.update(cp);
     this.rocks.update(cp);
     this.sky.update(cp, t);
