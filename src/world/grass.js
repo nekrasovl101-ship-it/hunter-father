@@ -7,7 +7,7 @@ import { mulberry32 } from '../../shared/world.js';
 // берутся из текстуры высот. Ветер и примятие игроком — в вершинном шейдере.
 
 // Пучок изогнутых травинок. color.r — доля высоты (0 у корня, 1 у кончика).
-function bladeClump(rnd, blades, fine = false) {
+function bladeClump(rnd, blades, fine = false, widthMul = 1) {
   const pos = [], col = [], idx = [];
   for (let b = 0; b < blades; b++) {
     // «Ультра»: узкие длинные травинки разной высоты (как настоящий луг), плотнее у центра пучка
@@ -16,7 +16,7 @@ function bladeClump(rnd, blades, fine = false) {
     const ox = fine ? Math.cos(ang) * spread * 0.5 : (rnd() - 0.5) * 0.45, oz = fine ? Math.sin(ang) * spread * 0.5 : (rnd() - 0.5) * 0.45;
     const a = rnd() * Math.PI * 2;
     const cx = Math.cos(a), sz = Math.sin(a);
-    const w = fine ? 0.007 + rnd() * 0.009 : 0.02 + rnd() * 0.016;
+    const w = (fine ? 0.007 + rnd() * 0.009 : 0.02 + rnd() * 0.016) * widthMul;
     const h = fine ? 0.18 + Math.pow(rnd(), 1.6) * 0.62 : 0.3 + rnd() * 0.4;
     const curve = fine ? 0.04 + rnd() * 0.3 : 0.08 + rnd() * 0.22;
     const start = pos.length / 3;
@@ -64,7 +64,7 @@ function flowerGeo() {
   return g;
 }
 
-function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fine = false) {
+function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fine = false, inner = 0) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
   geo.setAttribute('position', base.attributes.position);
@@ -87,6 +87,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
     uHalf: { value: HALF },
     uTime: shared.uTime,
     uSeason: shared.uSeason,
+    uInner: { value: inner },
   };
   const mat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
   if (fine) mat.defines = { FINE_GRASS: '' };
@@ -101,6 +102,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         uniform vec3 uPlayer;
         uniform float uTile, uDist, uWorld, uHalf, uTime;
         uniform vec4 uSeason;
+        uniform float uInner;
         varying vec3 vGrassCol;`)
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
       .replace('#include <begin_vertex>', `
@@ -109,6 +111,8 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         vec4 hs = texture2D(uHeight, (wp + uHalf) / uWorld);
         float d = distance(wp, uCenter);
         float fade = 1.0 - smoothstep(uDist * 0.55, uDist, d);
+        // дальний слой не рисуется вблизи — там работает подробный слой
+        if (uInner > 0.0) fade *= smoothstep(uInner * 0.75, uInner, d);
         float dens = ${flowers ? 'hs.g * (1.0 - hs.b) * smoothstep(0.35, 0.6, hs.a) * 0.5' : 'hs.g'};
         float sc = step(aOff.w, dens) * fade * (0.65 + 0.6 * fract(aOff.w * 7.31));
         // зимой трава под снегом (торчат редкие сухие стебли), цветов нет; осенью цветов мало
@@ -182,16 +186,24 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
 export function createGrass(preset, heightTex, shared) {
   const rnd = mulberry32(777);
   const group = new THREE.Group();
+  const fine = !!preset.post;
   const tile = preset.grassDist * 2.1;
-  const grass = makeLayer(bladeClump(rnd, preset.grassBlades || 7, !!preset.post), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false, !!preset.post);
+  // основной (средний) слой
+  const grass = makeLayer(bladeClump(rnd, preset.grassBlades || 7, fine), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false, fine);
   const flowers = makeLayer(flowerGeo(), Math.round(preset.grass * 0.12), tile, preset.grassDist * 0.8, heightTex, shared, rnd, true);
   group.add(grass, flowers);
   const layers = [grass, flowers];
-  // «Ультра»: второй, очень густой слой вокруг игрока (до ~20 м) — сплошной луг под ногами
+  // густой подробный слой у ног (до ~20 м)
   if (preset.grassNear) {
     const near = makeLayer(bladeClump(rnd, 11, true), preset.grassNear, 40, 20, heightTex, shared, rnd, false, true);
     group.add(near);
     layers.push(near);
+  }
+  // дальний слой: те же пучки, но из 3 широких травинок — вдали деталей не видно, а вершин в 3 раза меньше
+  if (preset.grassFar) {
+    const far = makeLayer(bladeClump(rnd, 3, fine, 2.6), preset.grassFar, preset.grassFarDist * 2.1, preset.grassFarDist, heightTex, shared, rnd, false, fine, preset.grassDist * 0.85);
+    group.add(far);
+    layers.push(far);
   }
   group.update = (camPos, playerPos) => {
     for (const m of layers) {

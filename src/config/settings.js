@@ -17,7 +17,7 @@ export const PRESETS = {
   },
   ultra: {
     label: 'Ультра', pixelRatio: 2.5, antialias: true, shadows: true, shadowMap: 4096,
-    terrainSeg: 448, normalMaps: true, grass: 100000, grassDist: 105,
+    terrainSeg: 448, normalMaps: true, grass: 50000, grassDist: 50, grassFar: 60000, grassFarDist: 105,
     treeHi: 150, viewDist: 480, shadowDist: 100, softShadows: true, aniso: 16,
     hdTextures: true, post: true, grassBlades: 9, grassNear: 42000,
   },
@@ -26,16 +26,15 @@ export const PRESETS = {
 export const isTouch = new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-// Настройки под телефон: те же режимы, но легче (меньше травы, теней, разрешения, без 2K-текстур).
-// «Высокая» и «Ультра» на телефоне выглядят почти так же, но идут заметно плавнее.
+// Телефон: те же режимы и та же картинка. Отличия только там, где глаз их не видит
+// (сглаживание, тени через кадр) или где Safari ограничивает видеопамять (2K — только у земли).
 const MOBILE = {
-  medium: { pixelRatio: 1.75, msaa: true, grass: 8000 },
-  low: { pixelRatio: 1.4, msaa: true },
-  high: { pixelRatio: 2, msaa: true, shadowMap: 1024, shadowDist: 50, terrainSeg: 256, grass: 18000, grassDist: 40, treeHi: 70, viewDist: 300, aniso: 8, shadowEvery: 2 },
-  ultra: {
-    pixelRatio: 2, msaa: true, shadowMap: 2048, softShadows: false, shadowDist: 60, terrainSeg: 320, grass: 30000, grassDist: 55,
-    grassNear: 15000, grassBlades: 7, hdTextures: false, viewDist: 360, treeHi: 90, aniso: 8, postLite: true, reflectScale: 0.25, shadowEvery: 2,
-  },
+  low: { pixelRatio: 1.5, msaa: true },
+  medium: { pixelRatio: 2, msaa: true },
+  high: { pixelRatio: 2, msaa: true, shadowEvery: 2 },
+  // та же картинка, что на компьютере; отличия только незаметные глазу:
+  // тени пересчитываются через кадр, 2K — только у текстур земли (лимит видеопамяти Safari)
+  ultra: { pixelRatio: 2, msaa: true, shadowEvery: 2, hdTextures: 'ground', reflectScale: 0.35 },
 };
 export function getPreset(key) {
   const base = PRESETS[key] || PRESETS.medium;

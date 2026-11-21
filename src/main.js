@@ -90,7 +90,7 @@ class Game {
     if (this.season === 'autumn') keys.push('leaves');
     const loaded = await Promise.all(keys.map((k) => loadSet(k, {
       normal: nm && !['meadow', 'moss'].includes(k),
-      hd: preset.hdTextures,
+      hd: preset.hdTextures === true || (preset.hdTextures === 'ground' && ['grass', 'meadow', 'forest', 'mud', 'rock', 'snow', 'leaves'].includes(k)),
       anisotropy: ['grass', 'meadow', 'forest', 'mud', 'rock', 'snow', 'leaves'].includes(k) ? aniso : 2,
     })));
     const sets = Object.fromEntries(keys.map((k, i) => [k, loaded[i]]));
@@ -291,8 +291,18 @@ class Game {
     this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
     const target = isTouch ? 40 : 55;
     let s = this.resScale;
-    if (fps < target - 3) s = Math.max(isTouch ? 0.72 : 0.6, s * (fps < target * 0.7 ? 0.88 : 0.94)); // не опускаемся до «пикселей»
-    else if (fps > target + 8 || (fps > 58 && s < 1)) s = Math.min(1, s * 1.06);
+    // если прошлое снижение чёткости не дало прироста — упираемся не в пиксели
+    // (лимит 30 FPS в энергосбережении, слабый процессор): возвращаем чёткость и не трогаем 30 с
+    if (this._lastDrop && fps < this._lastDrop.fps * 1.04) {
+      s = this._lastDrop.scale; this._lastDrop = null; this._lockT = performance.now() + 30000;
+    } else {
+      this._lastDrop = null;
+      const locked = performance.now() < (this._lockT || 0);
+      if (fps < target - 3 && !locked) {
+        const ns = Math.max(isTouch ? 0.72 : 0.6, s * (fps < target * 0.7 ? 0.88 : 0.94)); // не опускаемся до «пикселей»
+        if (ns < s) { this._lastDrop = { fps, scale: s }; s = ns; }
+      } else if (fps > target + 8 || (fps > 58 && s < 1)) s = Math.min(1, s * 1.06);
+    }
     if (Math.abs(s - this.resScale) > 0.01) {
       this.resScale = s;
       this.renderer.setPixelRatio(this.basePixelRatio * s);
