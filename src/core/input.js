@@ -17,7 +17,8 @@ export class Input {
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
-      if (e.code === 'KeyR') this._edges.add('reload');
+      // R: в прицеле — выстрел, без прицела — перезарядка (e.code — физическая клавиша, работает и в русской раскладке)
+      if (e.code === 'KeyR' && !e.repeat) this._edges.add(this.aim ? 'fire' : 'reload');
       if (e.code === 'Space') this._edges.add('jump');
       if (e.code === 'KeyH') this._edges.add('debug');
       if (e.code === 'KeyF' || e.code === 'KeyE') this._edges.add('use');
