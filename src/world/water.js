@@ -32,7 +32,8 @@ export function createWater(heightTex, preset) {
 // Материал воды: river — река (течение, пена, прозрачность по глубине),
 // puddle — лужа (стоячая вода, круги от капель, мутноватая, мягкий край).
 export function createWaterMaterial(heightTex, preset, puddle) {
-  const reflect = !!preset.post;
+  // у луж без своего зеркала («Ультра для телефона») — отражение цвета неба
+  const reflect = !!preset.post && (!puddle || preset.puddleMirror !== false);
   const defines = {};
   if (reflect) defines.USE_REFLECT = '';
   if (puddle) defines.PUDDLE = '';

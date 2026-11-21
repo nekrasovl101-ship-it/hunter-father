@@ -15,6 +15,13 @@ export const PRESETS = {
     terrainSeg: 320, normalMaps: true, grass: 45000, grassDist: 60,
     treeHi: 100, viewDist: 380, shadowDist: 70,
   },
+  // для телефонов: «Высокая» + облегчённые эффекты «Ультры»
+  ultraPhone: {
+    label: 'Ультра для телефона', pixelRatio: 2, antialias: true, shadows: true, shadowMap: 2048,
+    terrainSeg: 320, normalMaps: true, grass: 40000, grassDist: 55, grassNear: 16000, grassBlades: 7,
+    treeHi: 100, viewDist: 400, shadowDist: 70, aniso: 8,
+    hdTextures: 'ground', post: true, postLite: true, reflectScale: 0.3, puddleMirror: false,
+  },
   ultra: {
     label: 'Ультра', pixelRatio: 2.5, antialias: true, shadows: true, shadowMap: 4096,
     terrainSeg: 448, normalMaps: true, grass: 50000, grassDist: 50, grassFar: 60000, grassFarDist: 105,
@@ -26,19 +33,11 @@ export const PRESETS = {
 export const isTouch = new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-// Телефон: те же режимы и та же картинка. Отличия только там, где глаз их не видит
-// (сглаживание, тени через кадр) или где Safari ограничивает видеопамять (2K — только у земли).
-const MOBILE = {
-  low: { pixelRatio: 1.5, msaa: true },
-  medium: { pixelRatio: 2, msaa: true },
-  high: { pixelRatio: 2, msaa: true, shadowEvery: 2 },
-  // та же картинка, что на компьютере; отличия только незаметные глазу:
-  // тени пересчитываются через кадр, 2K — только у текстур земли (лимит видеопамяти Safari)
-  ultra: { pixelRatio: 2, msaa: true, shadowEvery: 2, hdTextures: 'ground', reflectScale: 0.35 },
-};
+// Режимы одинаковы на телефоне и компьютере (как раньше, когда «Высокая» шла идеально).
+// Авто-оптимизация (незаметное снижение нагрузки при нехватке FPS) — только у «Ультры» на компьютере.
 export function getPreset(key) {
   const base = PRESETS[key] || PRESETS.medium;
-  return { ...base, shadowEvery: 1, reflectScale: 0.4, ...(isTouch ? MOBILE[key] || {} : {}) };
+  return { shadowEvery: 1, reflectScale: 0.4, puddleMirror: true, ...base, adaptive: key === 'ultra' && !isTouch };
 }
 
 const KEY = 'hf_settings_v1';

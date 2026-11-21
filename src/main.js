@@ -709,7 +709,7 @@ class Game {
     }
     this._frameN++;
     if (this._frameN % (this.preset.shadowEvery || 1) === 0) this.renderer.shadowMap.needsUpdate = true;
-    this.adaptResolution(dt);
+    if (this.preset.adaptive) this.adaptResolution(dt);
     if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night), this.sky.sunset); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
@@ -761,12 +761,12 @@ function setupMenu() {
   const warnUltra = (sel) => sel.addEventListener('change', () => {
     if (sel.value !== 'ultra') return;
     $('#ultra-text').textContent = isTouch
-      ? 'На телефоне включится облегчённая «Ультра»: отражения в воде, лучи солнца, густая трава. Телефон может заметно нагреваться и быстрее садиться. Если будет тормозить — игра сама снизит чёткость, а лучше выбрать «Высокую».'
+      ? '«Ультра» сделана для компьютеров — на телефоне её лучше не запускать: будет тормозить и сильно греться. Для телефона есть свой режим «Ультра для телефона» — красивее «Высокой», но идёт плавно.'
       : 'Вы точно хотите включить «Ультру»? Это максимальная графика: отражения в воде, лучи солнца, 2K-текстуры. Компьютер может немного нагреваться и шуметь вентиляторами, нужна хорошая видеокарта.';
-    $('#ultra-cancel').textContent = isTouch ? 'Оставить «Среднюю»' : 'Оставить «Высокую»';
+    $('#ultra-cancel').textContent = isTouch ? 'Выбрать «Ультра для телефона»' : 'Оставить «Высокую»';
     $('#ultra-ok').textContent = isTouch ? 'Всё равно включить' : 'Да, включить «Ультру»';
     $('#ultra-warn').classList.remove('hidden');
-    $('#ultra-cancel').onclick = () => { sel.value = isTouch ? 'medium' : 'high'; $('#ultra-warn').classList.add('hidden'); sel.dispatchEvent(new Event('input')); };
+    $('#ultra-cancel').onclick = () => { sel.value = isTouch ? 'ultraPhone' : 'high'; $('#ultra-warn').classList.add('hidden'); sel.dispatchEvent(new Event('input')); };
     $('#ultra-ok').onclick = () => $('#ultra-warn').classList.add('hidden');
   });
   warnUltra(quality);

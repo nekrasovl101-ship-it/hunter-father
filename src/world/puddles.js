@@ -112,7 +112,7 @@ export function createPuddleMesh(puddles, heightTex, preset) {
   const mesh = new THREE.Mesh(puddles.geo, mat);
   mesh.renderOrder = 2;
   mesh.matrixAutoUpdate = false;
-  if (preset.post) mesh.mirror = new Mirror([mat], 0, preset.reflectScale * 0.8);
+  if (preset.post && preset.puddleMirror) mesh.mirror = new Mirror([mat], 0, preset.reflectScale * 0.8);
   mesh.nearestPos = new THREE.Vector3();
   // отражение строится для плоскости ближайшей к камере лужи
   mesh.nearestLevel = (cam) => {
