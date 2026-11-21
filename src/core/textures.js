@@ -60,9 +60,21 @@ export function loadImage(url) {
   return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
 }
 
+// Подмена текстур набора на 2K «на лету»: игра стартует с обычными текстурами,
+// а 2K докачиваются в фоне и подставляются в те же объекты Texture (материалы не трогаем).
+export function upgradeSetToHD(key, set) {
+  const id = TEXTURE_SETS[key];
+  if (!HD.has(id)) return Promise.resolve();
+  const swap = (tex, file) => tex && loadImage(`textures/hd/${id}_${file}.jpg`).then((img) => {
+    tex.image = img;
+    tex.needsUpdate = true;
+  }).catch(() => {});
+  return Promise.all([swap(set.albedo, 'albedo'), swap(set.normal, 'normal'), swap(set.rough, 'rough')]);
+}
+
 export async function loadSet(key, { normal = true, anisotropy = 4, hd = false } = {}) {
   const id = TEXTURE_SETS[key];
-  const h = hd && HD.has(id);
+  const h = hd === 'now' && HD.has(id);
   const [albedo, nrm, rough] = await Promise.all([
     loadOne(`${id}_albedo`, true, anisotropy, h),
     normal ? loadOne(`${id}_normal`, false, anisotropy, h) : null,

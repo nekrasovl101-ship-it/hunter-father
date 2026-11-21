@@ -152,7 +152,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         vec3 tipDry = vec3(0.30, 0.27, 0.10);
         #endif
         vec3 tip = mix(tipLush, tipDry, dry * 0.8) * (0.8 + 0.4 * fract(aOff.w * 31.1));
-        vGrassCol = mix(baseC, tip, smoothstep(0.0, 0.9, t)) * mix(1.0, 0.7, hs.b);
+        vGrassCol = mix(baseC, tip, smoothstep(0.0, 0.9, t)) * mix(1.0, 0.88, hs.b);
         vGrassCol *= 1.0 - uSeason.w * 0.25;
         vGrassCol = mix(vGrassCol, vec3(0.30, 0.25, 0.15) * (0.45 + 0.55 * t), uSeason.y);
         ${flowers ? `
@@ -198,7 +198,8 @@ export function createGrass(preset, heightTex, shared) {
   group.lod = { mid: grass, flowers };
   // густой подробный слой у ног (до ~20 м)
   if (preset.grassNear) {
-    const near = makeLayer(bladeClump(rnd, 11, true), preset.grassNear, 40, 20, heightTex, shared, rnd, false, true);
+    // плавный переход: густой слой тянется до 26 м и постепенно редеет (плотность та же — плитка больше)
+    const near = makeLayer(bladeClump(rnd, 11, true), Math.round(preset.grassNear * 1.69), 52, 26, heightTex, shared, rnd, false, true);
     group.add(near);
     layers.push(near);
     group.lod.near = near;

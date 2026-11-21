@@ -6,7 +6,7 @@ import { createPuddles, createPuddleMesh } from './world/puddles.js';
 import { Environment, Precipitation, seasonFor, seasonVector, SEASONS, WEATHER_NAMES } from './world/environment.js';
 import { PRESETS, getPreset, loadSettings, saveSettings, isTouch } from './config/settings.js';
 import { VEHICLES } from './config/models.js';
-import { initTextures, loadSet } from './core/textures.js';
+import { initTextures, loadSet, upgradeSetToHD } from './core/textures.js';
 import { Input } from './core/input.js';
 import { Sound } from './core/audio.js';
 import { createTerrain } from './world/terrain.js';
@@ -54,7 +54,10 @@ class Game {
     this.damageT = 0;
   }
 
-  async init(onProgress) {
+  async init(onProgress0) {
+    // ?timing — замер этапов загрузки в консоль
+    const T0 = performance.now(); let Tp = T0;
+    const onProgress = (k, label) => { if (location.search.includes('timing')) { const n = performance.now(); console.log(`[load] ${label} +${Math.round(n - Tp)} мс (всего ${Math.round(n - T0)})`); Tp = n; } onProgress0(k, label); };
     const preset = (this.preset = getPreset(settings.quality));
     this.season = seasonFor(settings.season);
     this.shared.uSeason.value.copy(seasonVector(this.season));
@@ -90,10 +93,11 @@ class Game {
     if (this.season === 'autumn') keys.push('leaves');
     const loaded = await Promise.all(keys.map((k) => loadSet(k, {
       normal: nm && !['meadow', 'moss'].includes(k),
-      hd: preset.hdTextures === true || (preset.hdTextures === 'ground' && ['grass', 'meadow', 'forest', 'mud', 'rock', 'snow', 'leaves'].includes(k)),
+      hd: false, // 2K подгружаются в фоне после старта (см. upgradeTextures)
       anisotropy: ['grass', 'meadow', 'forest', 'mud', 'rock', 'snow', 'leaves'].includes(k) ? aniso : 2,
     })));
     const sets = Object.fromEntries(keys.map((k, i) => [k, loaded[i]]));
+    this._sets = sets;
 
     onProgress(0.35, 'Генерация леса…');
     await new Promise((r) => setTimeout(r, 0));
@@ -191,6 +195,7 @@ class Game {
     this._frameN = 0;
     this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
     this.resize();
+    onProgress(0.95, 'Шейдеры…');
     renderer.compile(scene, camera);
     onProgress(1, 'Готово');
   }
@@ -202,8 +207,21 @@ class Game {
     this.post?.setSize(innerWidth, innerHeight);
   }
 
+  // 2K-текстуры: качаем в фоне по одному набору (сначала земля), подменяем на лету
+  async upgradeTextures() {
+    const p = this.preset.hdTextures;
+    if (!p || !this._sets) return;
+    const ground = ['grass', 'meadow', 'forest', 'mud', 'rock', 'snow', 'leaves'];
+    const order = Object.keys(this._sets).sort((a, b) => ground.includes(b) - ground.includes(a));
+    for (const k of order) {
+      if (p === 'ground' && !ground.includes(k)) continue;
+      await upgradeSetToHD(k, this._sets[k]);
+    }
+  }
+
   start() {
     this.running = true;
+    setTimeout(() => this.upgradeTextures(), 1500);
     this.hud.show(true);
     if (this.net) {
       $('#room-tag').classList.remove('hidden');

@@ -18,13 +18,13 @@ export const PRESETS = {
   // для телефонов: «Высокая» + облегчённые эффекты «Ультры»
   ultraPhone: {
     label: 'Ультра для телефона', pixelRatio: 2, antialias: true, shadows: true, shadowMap: 2048,
-    terrainSeg: 320, normalMaps: true, grass: 40000, grassDist: 55, grassNear: 16000, grassBlades: 7,
+    terrainSeg: 320, normalMaps: true, grass: 50000, grassDist: 50, grassNear: 42000, grassBlades: 9, grassFar: 60000, grassFarDist: 105,
     treeHi: 100, viewDist: 400, shadowDist: 70, aniso: 8,
     hdTextures: 'ground', post: true, postLite: true, reflectScale: 0.3, puddleMirror: false,
   },
   ultra: {
     label: 'Ультра', pixelRatio: 2.5, antialias: true, shadows: true, shadowMap: 4096,
-    terrainSeg: 448, normalMaps: true, grass: 50000, grassDist: 50, grassFar: 60000, grassFarDist: 105,
+    terrainSeg: 448, normalMaps: true, grass: 65000, grassDist: 50, grassFar: 60000, grassFarDist: 105,
     treeHi: 150, viewDist: 480, shadowDist: 100, softShadows: true, aniso: 16,
     hdTextures: true, post: true, grassBlades: 9, grassNear: 42000,
   },

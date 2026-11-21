@@ -114,8 +114,8 @@ float pm = texture2D(tPuddle, (vTerrWorld.xz + 400.0) / 800.0).r;
 float pn = (tNoise(vTerrWorld.xz * 1.3) - 0.5) * 0.22 + (tNoise(vTerrWorld.xz * 5.0) - 0.5) * 0.06;
 // сама вода — отдельный меш (как река); здесь только тёмная мокрая земля вокруг и под ней
 float puddle = 0.0;
-float rim = (1.0 - sn) * smoothstep(0.15, 0.5, pm + pn);
-alb *= 1.0 - rim * 0.5;
+float rim = (1.0 - sn) * smoothstep(0.3, 0.5, pm + pn);
+alb *= 1.0 - rim * 0.22; // лёгкая мокрая кромка только у самой лужи
 #else
 float puddle = uSeason.w * (1.0 - sn) * (sw.z + sw.y * 0.5 + sw.x * 0.3) * smoothstep(0.64, 0.7, tNoise(vTerrWorld.xz * 0.11) * 0.7 + tNoise(vTerrWorld.xz * 0.43) * 0.3) * (1.0 - sw.w) * (1.0 - sw.y * 0.6);
 #endif
