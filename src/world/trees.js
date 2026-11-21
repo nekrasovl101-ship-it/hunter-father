@@ -197,7 +197,7 @@ function crownMaterial(map, shared, preset, flutter) {
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = shared.uTime;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;')
+      .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying float vAO;\nvarying vec3 vTint;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         #ifdef USE_INSTANCING
         vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
@@ -208,11 +208,25 @@ function crownMaterial(map, shared, preset, flutter) {
         float ph = uTime * 1.2 + ip.x * 0.11 + ip.z * 0.13;
         transformed.x += sin(ph) * sw;
         transformed.z += sin(ph * 0.8 + 1.3) * sw * 0.6;
-        transformed += sin(uTime * 4.0 + position.x * 3.1 + position.y * 2.3 + ip.x) * ${flutter.toFixed(3)} * step(2.0, position.y);`)
+        transformed += sin(uTime * 4.0 + position.x * 3.1 + position.y * 2.3 + ip.x) * ${flutter.toFixed(3)} * step(2.0, position.y);
+        // самозатенение: внутри кроны и у низа темнее
+        vAO = clamp(0.42 + length(position.xz) * 0.22 + position.y * 0.025, 0.42, 1.0);
+        // у каждого дерева свой оттенок
+        float hsh = fract(sin(ip.x * 12.9898 + ip.z * 78.233) * 43758.5453);
+        vTint = mix(vec3(0.82, 0.93, 0.78), vec3(1.12, 1.06, 0.86), hsh);`)
       // свет одинаковый с обеих сторон карточки + лёгкая «просвечиваемость»
       .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <normal_fragment_begin>', 'float faceDirection = 1.0;\nvec3 normal = normalize(vNormal);\nvec3 nonPerturbedNormal = normal;');
+      .replace('#include <common>', '#include <common>\nvarying float vAO;\nvarying vec3 vTint;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vTint * vAO;')
+      .replace('#include <normal_fragment_begin>', 'float faceDirection = 1.0;\nvec3 normal = normalize(vNormal);\nvec3 nonPerturbedNormal = normal;')
+      // просвет листвы против солнца
+      .replace('#include <opaque_fragment>', `
+        #if NUM_DIR_LIGHTS > 0
+        float tr = pow(max(dot(normalize(-vViewPosition), directionalLights[0].direction), 0.0), 5.0);
+        outgoingLight += diffuseColor.rgb * directionalLights[0].color * tr * 0.55 * vAO;
+        #endif
+        #include <opaque_fragment>`);
   };
   return m;
 }

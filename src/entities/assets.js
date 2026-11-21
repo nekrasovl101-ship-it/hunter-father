@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MODELS } from '../config/models.js';
 
 const loader = new GLTFLoader();
@@ -79,6 +79,58 @@ function tintMaterials(root, color) {
   });
 }
 
+// «Мех»: мелкие пряди (шум вдоль тела), светлое брюхо / тёмная спина и мягкий
+// ворс по контуру (rim) — низкополигональные модели выглядят живее.
+const FUR_GLSL = /* glsl */`
+  varying vec3 vFurP; varying vec3 vFurN; uniform float uFurFreq;
+  float fh(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+  float fn3(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(fh(i), fh(i + vec3(1,0,0)), f.x), mix(fh(i + vec3(0,1,0)), fh(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix(fh(i + vec3(0,0,1)), fh(i + vec3(1,0,1)), f.x), mix(fh(i + vec3(0,1,1)), fh(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
+
+function furify(root, strength = 1, smooth = true) {
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    if (smooth && !o.geometry.morphAttributes?.position) {
+      // гранёная low-poly модель → сглаженные нормали (склеиваем вершины по позиции)
+      const g = o.geometry.clone();
+      g.deleteAttribute('normal');
+      const merged = mergeVertices(g, 1e-4);
+      merged.computeVertexNormals();
+      o.geometry = merged;
+    }
+    o.geometry.computeBoundingBox();
+    const sz = o.geometry.boundingBox.getSize(new THREE.Vector3());
+    const freq = 130 / Math.max(sz.x, sz.y, sz.z, 1e-3);
+    const mats = [].concat(o.material).map((m0) => {
+      const m = m0.clone();
+      const prev = m0.onBeforeCompile;
+      m.onBeforeCompile = (sh, r) => {
+        prev?.call(m, sh, r);
+        sh.uniforms.uFurFreq = { value: freq };
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vFurP; varying vec3 vFurN;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFurP = position; vFurN = objectNormal;');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\n' + FUR_GLSL)
+          .replace('#include <color_fragment>', `#include <color_fragment>
+            float strand = fn3(vFurP * uFurFreq * vec3(1.0, 3.5, 1.0)) * 0.6 + fn3(vFurP * uFurFreq * 2.7) * 0.4;
+            diffuseColor.rgb *= mix(1.0, 0.72 + 0.56 * strand, ${strength.toFixed(2)});
+            float upN = normalize(vFurN).y;
+            diffuseColor.rgb *= mix(1.0, mix(1.2, 0.88, smoothstep(-0.6, 0.8, upN)), ${strength.toFixed(2)});`)
+          .replace('#include <opaque_fragment>', `
+            float rim = pow(1.0 - max(dot(normalize(normal), normalize(vViewPosition)), 0.0), 3.0);
+            outgoingLight += diffuseColor.rgb * rim * 0.45 * ${strength.toFixed(2)};
+            #include <opaque_fragment>`);
+      };
+      m.customProgramCacheKey = () => (m0.customProgramCacheKey?.() || '') + 'fur' + strength;
+      m.roughness = Math.max(m.roughness ?? 0.9, 0.85);
+      return m;
+    });
+    o.material = Array.isArray(o.material) ? mats : mats[0];
+  });
+}
+
 function findClip(clips, names) {
   for (const n of names) {
     const exact = clips.find((c) => c.name === n);
@@ -98,6 +150,7 @@ export async function loadModel(key) {
     scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) if (!m.metalnessMap) { m.metalness = 0; m.roughness = Math.max(m.roughness ?? 1, 0.6); } });
     if (cfg.flatten) flattenMaterials(scene);
     if (cfg.tint) tintMaterials(scene, new THREE.Color(cfg.tint));
+    furify(scene, key === 'hunter' ? 0.35 : 1);
     scene.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(scene, true);
     const size = box.getSize(new THREE.Vector3());

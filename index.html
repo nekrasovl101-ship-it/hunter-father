@@ -110,6 +110,15 @@
     <div id="speedo"></div>
     <div id="damage"></div>
     <div id="room-tag" class="hidden"></div>
+    <!-- Инвентарь -->
+    <div id="hotbar">
+      <button class="slot" data-slot="rifle"><i>1</i><span class="ico">🎯</span><small>Ружьё</small><em id="inv-ammo"></em></button>
+      <button class="slot" data-slot="binoc"><i>2</i><span class="ico">🔭</span><small>Бинокль</small></button>
+      <button class="slot" data-slot="phone"><i>3</i><span class="ico">📱</span><small>Телефон</small></button>
+      <button class="slot" data-slot="light"><i>4</i><span class="ico">🔦</span><small>Фонарик</small><em id="inv-light">выкл</em></button>
+      <button class="slot" data-slot="med"><i>5</i><span class="ico">🩹</span><small>Аптечка</small><em id="inv-med"></em></button>
+      <div class="slot trophy"><span class="ico">🦌</span><small>Трофеи</small><em id="inv-trophy">0</em></div>
+    </div>
   </div>
   <button id="btn-board" class="hidden" title="Таблица (Tab)">🏆</button>
   <div id="board" class="hidden"><div id="board-list"></div><p class="note">Tab — закрыть</p></div>
@@ -125,8 +134,6 @@
     <button id="btn-pause">❚❚</button>
     <button id="btn-use" class="hidden">🚙</button>
     <button id="btn-view" class="hidden">👁</button>
-    <button id="btn-binoc">🔭</button>
-    <button id="btn-phone">📱</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>

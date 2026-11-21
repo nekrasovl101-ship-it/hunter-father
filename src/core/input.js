@@ -24,6 +24,9 @@ export class Input {
       if (e.code === 'KeyV' || e.code === 'KeyC') this._edges.add('view');
       if (e.code === 'KeyB') this._edges.add('binoc');
       if (e.code === 'KeyM' || e.code === 'KeyP') this._edges.add('phone');
+      if (e.code === 'KeyL') this._edges.add('light');
+      const dg = /^Digit([1-5])$/.exec(e.code);
+      if (dg) this._edges.add('slot' + dg[1]);
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => { this.keys.clear(); this.fireHeld = false; this.aim = false; });
@@ -47,6 +50,8 @@ export class Input {
       if (e.button === 2) this.aim = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // колесо мыши — листать инвентарь
+    addEventListener('wheel', (e) => { if (this.enabled && Math.abs(e.deltaY) > 4) this._edges.add(e.deltaY > 0 ? 'slotNext' : 'slotPrev'); }, { passive: true });
     addEventListener('mousemove', (e) => {
       // без Pointer Lock (например, во встроенном браузере) — обзор перетаскиванием
       if (!this.locked && !(this.dragLook && e.buttons)) return;
@@ -168,8 +173,7 @@ export class Input {
     jb.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); this._edges.add('jump'); this.jumpHeld = true; this._jumpTouch = true; }, { passive: false });
     jb.addEventListener('touchend', () => { this.jumpHeld = false; this._jumpTouch = false; });
     tap('#btn-use', () => this._edges.add('use'));
-    tap('#btn-binoc', () => this._edges.add('binoc'));
-    tap('#btn-phone', () => this._edges.add('phone'));
+
     tap('#btn-view', () => this._edges.add('view'));
     tap('#btn-pause', () => this._edges.add('pause'));
     this.syncAimButton = () => root.querySelector('#btn-aim').classList.toggle('on', this.aim);

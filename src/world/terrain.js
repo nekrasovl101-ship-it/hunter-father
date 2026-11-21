@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WORLD_SIZE, HALF, heightAt, slopeAt, splatAt, grassDensityAt } from '../../shared/terrain.js';
+import { WORLD_SIZE, HALF, heightAt, slopeAt, splatAt, grassDensityAt, fbm } from '../../shared/terrain.js';
 
 // Сетка высот, совпадающая с мешем: по ней ставим траву, игрока, животных.
 export class Ground {
@@ -136,19 +136,55 @@ export function createTerrain(preset, sets) {
   mesh.receiveShadow = preset.shadows;
   mesh.matrixAutoUpdate = false;
 
-  // Дальнее кольцо гор за пределами карты (низкая детализация, без теней)
-  const farGeo = new THREE.PlaneGeometry(WORLD_SIZE * 3, WORLD_SIZE * 3, 72, 72);
-  farGeo.rotateX(-Math.PI / 2);
-  const fp = farGeo.attributes.position;
-  for (let i = 0; i < fp.count; i++) {
-    const x = fp.getX(i), z = fp.getZ(i);
-    const inside = Math.max(Math.abs(x), Math.abs(z)) < HALF - 10;
-    fp.setY(i, inside ? -30 : heightAt(x, z) - 1);
-  }
-  farGeo.computeVertexNormals();
-  const farMat = new THREE.MeshLambertMaterial({ color: 0x4d5a33 });
-  const far = new THREE.Mesh(farGeo, farMat);
+  // Дальние горы за пределами карты: кольцо в полярной сетке (плотнее по углу),
+  // хребты из «гребневого» шума, выше к горизонту. Цвет — лес / скалы / снег в шейдере.
+  const far = new THREE.Mesh(farMountains(preset), new THREE.MeshBasicMaterial({ color: 0x4d5a33 }));
   far.matrixAutoUpdate = false;
 
   return { mesh, far, ground, heightTex };
+}
+
+function ridged(x, z) {
+  let sum = 0, amp = 0.55, f = 1;
+  for (let i = 0; i < 5; i++) {
+    const n = 1 - Math.abs(fbm(x * f, z * f, 1, 300 + i * 31) * 2 - 1);
+    sum += n * n * amp; amp *= 0.5; f *= 2.03;
+  }
+  return sum;
+}
+
+function farMountains(preset) {
+  const A = preset.terrainSeg >= 300 ? 360 : 220;  // шагов по углу
+  const R = preset.terrainSeg >= 300 ? 56 : 36;    // колец
+  const r0 = HALF * 0.86, r1 = 1600;
+  const pos = new Float32Array((A + 1) * (R + 1) * 3);
+  let k = 0;
+  for (let j = 0; j <= R; j++) {
+    const r = r0 + (r1 - r0) * Math.pow(j / R, 1.6);
+    for (let i = 0; i <= A; i++) {
+      const a = (i / A) * Math.PI * 2;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const e = Math.max(Math.abs(x), Math.abs(z));
+      let y;
+      if (e < HALF - 4) y = heightAt(x, z) - 4; // под картой — не видно
+      else {
+        const out = Math.min(1, (e - HALF) / 260);
+        const ridge = ridged(x * 0.0035, z * 0.0035);
+        const far = Math.min(1, (e - HALF) / 900);
+        y = heightAt(Math.max(-HALF, Math.min(HALF, x)), Math.max(-HALF, Math.min(HALF, z))) * (1 - out * 0.4)
+          + out * out * (40 + ridge * 230 + far * 120 * fbm(x * 0.001, z * 0.001, 2, 91));
+      }
+      pos[k++] = x; pos[k++] = y; pos[k++] = z;
+    }
+  }
+  const idx = [];
+  for (let j = 0; j < R; j++) for (let i = 0; i < A; i++) {
+    const a = j * (A + 1) + i, b = a + 1, c = a + A + 1, d = c + 1;
+    idx.push(a, c, b, b, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
 }

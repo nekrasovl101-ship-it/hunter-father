@@ -71,7 +71,7 @@ class Game {
     renderer.shadowMap.type = preset.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 
     const scene = (this.scene = new THREE.Scene());
-    const camera = (this.camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 1500));
+    const camera = (this.camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 2000));
     scene.add(camera);
 
     onProgress(0.05, 'Текстуры…');
@@ -149,6 +149,19 @@ class Game {
     this.hud = new Hud();
     this.binoc = new Binoculars();
     this.phone = new Phone();
+    // инвентарь: в руках одно (ружьё/бинокль/телефон), фонарик — вкл/выкл, аптечка — расходник
+    this.slot = 'rifle';
+    this.medkits = 3;
+    this.flashlight = new THREE.SpotLight(0xfff0d8, 0, 60, 0.42, 0.55, 1.2);
+    this.flashlight.position.set(0.25, -0.2, 0);
+    this.flashlight.target.position.set(0, -0.6, -10);
+    camera.add(this.flashlight, this.flashlight.target);
+    this.lightOn = false;
+    for (const el of document.querySelectorAll('#hotbar .slot[data-slot]')) {
+      const fn = (e) => { e.preventDefault(); e.stopPropagation(); this.input._edges.add('pick:' + el.dataset.slot); };
+      el.addEventListener('click', fn);
+      el.addEventListener('touchstart', fn, { passive: false });
+    }
     addEventListener('resize', () => this.resize());
     this.resize();
 
@@ -233,6 +246,51 @@ class Game {
       }
     } else if (res && res.wallDist < 450) {
       this.impacts.spawn(o.clone().addScaledVector(dir, res.wallDist - 0.05), 0x6b5a40, 12);
+    }
+  }
+
+  // ---------- инвентарь ----------
+  select(slot) {
+    if (slot === this.slot) slot = 'rifle';   // повторный выбор — убрать в карман
+    this.slot = slot;
+    this.binoc.toggle(slot === 'binoc');
+    this.phone.toggle(slot === 'phone');
+    if (slot !== 'rifle') { this.input.aim = false; this.input.syncAimButton?.(); }
+  }
+
+  handleInventory(input) {
+    const order = ['rifle', 'binoc', 'phone'];
+    const keys = { slot1: 'rifle', slot2: 'binoc', slot3: 'phone', slot4: 'light', slot5: 'med', binoc: 'binoc', phone: 'phone', light: 'light' };
+    const picks = [];
+    for (const [edge, slot] of Object.entries(keys)) if (input.consume(edge)) picks.push(slot);
+    for (const slot of ['rifle', 'binoc', 'phone', 'light', 'med']) if (input.consume('pick:' + slot)) picks.push(slot);
+    if (input.consume('slotNext')) picks.push(order[(order.indexOf(this.slot) + 1) % 3]);
+    if (input.consume('slotPrev')) picks.push(order[(order.indexOf(this.slot) + 2) % 3]);
+    for (const slot of picks) {
+      if (slot === 'light') { this.lightOn = !this.lightOn; this.flashlight.intensity = this.lightOn ? 60 : 0; this.sound.click?.(0, 2600, 0.35); continue; }
+      if (slot === 'med') {
+        if (this.medkits <= 0) this.hud.message('Аптечки закончились', 'warn');
+        else if (this.player.health >= 100) this.hud.message('Вы здоровы');
+        else { this.medkits--; this.player.health = Math.min(100, this.player.health + 50); this.hud.message(`Аптечка: +50 здоровья (осталось ${this.medkits})`); }
+        continue;
+      }
+      if (this.driving) continue;
+      if (slot === 'rifle' && this.slot === 'rifle') continue;
+      this.select(slot);
+    }
+    if (this.slot === 'phone' && !this.phone.on) this.select('rifle'); // закрыли крестиком
+    // интерфейс
+    const hb = this._hb || (this._hb = { slots: [...document.querySelectorAll('#hotbar .slot[data-slot]')] });
+    const key = `${this.slot}|${this.lightOn}|${this.medkits}|${this.gun.ammo}/${this.gun.reserve}|${this.kills}`;
+    if (key !== hb.key) {
+      hb.key = key;
+      for (const el of hb.slots) el.classList.toggle('active', el.dataset.slot === this.slot);
+      document.querySelector('#hotbar [data-slot=light]').classList.toggle('lit', this.lightOn);
+      document.querySelector('#hotbar [data-slot=med]').classList.toggle('empty', this.medkits <= 0);
+      $('#inv-light').textContent = this.lightOn ? 'вкл' : 'выкл';
+      $('#inv-med').textContent = '×' + this.medkits;
+      $('#inv-ammo').textContent = `${this.gun.ammo}/${this.gun.reserve}`;
+      $('#inv-trophy').textContent = this.kills;
     }
   }
 
@@ -481,6 +539,7 @@ class Game {
       this.score = Math.max(0, this.score - 100);
       setTimeout(() => {
         this.player.health = 100;
+        this.medkits = 3;
         this.player.platform = null;
         this.player.pos.set(0, this.ground.sample(0, 0), 0);
         this.player.vel.set(0, 0, 0);
@@ -504,9 +563,8 @@ class Game {
       this.buildings.setEvening(Math.max(0, (tod - 0.6) / 0.4));
     }
 
-    if (input.consume('use')) { this.binoc.toggle(false); this.useAction(); }
-    if (input.consume('phone')) this.phone.toggle();
-    if (input.consume('binoc') && !this.driving) { this.binoc.toggle(); if (this.binoc.on) { input.aim = false; input.syncAimButton?.(); } }
+    if (input.consume('use')) { this.select('rifle'); this.useAction(); }
+    this.handleInventory(input);
     if (input.consume('debug')) this.views.debug = !this.views.debug;
     const p = this.player.pos;
 
@@ -523,11 +581,11 @@ class Game {
       if (this.sim && Math.abs(v.speed) > 3 && Math.random() < dt * 2) this.sim.noise(v.pos.x, v.pos.z, 0.35);
     } else {
       input.consume('view');
-      if (input.aim && this.binoc.on) this.binoc.toggle(false);
-      if (input.consume('fire') && this.player.health > 0) { if (this.binoc.on) this.binoc.toggle(false); else this.shoot(); }
-      if (input.consume('reload')) this.gun.reload();
-      this.gun.update(dt, input.aim, this.player.speed);
-      if (this.binoc.t > 0.6) this.gun.root.visible = false;
+      const armed = this.slot === 'rifle';
+      if (input.consume('fire') && this.player.health > 0) { if (armed) this.shoot(); else this.select('rifle'); }
+      if (input.consume('reload')) { if (!armed) this.select('rifle'); this.gun.reload(); }
+      this.gun.update(dt, armed && input.aim, this.player.speed);
+      if (!armed) this.gun.root.visible = false;
       this.player.update(dt, input, this.gun.aimT, this.binoc.t);
     }
     const cp = this.camera.position;

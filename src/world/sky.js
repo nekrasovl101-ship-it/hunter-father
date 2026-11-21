@@ -107,13 +107,13 @@ export class SkySystem {
     this.hemi.groundColor.copy(lerpC(a.hg, b.hg));
     this.hemi.intensity = a.hi + (b.hi - a.hi) * k;
     this.scene.fog.color.copy(hor);
-    this.scene.fog.near = 20 + (1 - t) * 20;
+    this.scene.fog.near = Math.max(30, this.preset.viewDist * 0.24 * (1 - t * 0.4));
   }
 
   // Материал для дальних гор: цвет неба в этом направлении (воздушная перспектива)
   farMaterial(viewDist) {
     return new THREE.ShaderMaterial({
-      uniforms: { ...this.uniforms, uFogColor: { value: this.scene.fog.color }, uNear: { value: viewDist * 0.9 }, uFar: { value: viewDist * 2.2 } },
+      uniforms: { ...this.uniforms, uFogColor: { value: this.scene.fog.color }, uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 } },
       vertexShader: /* glsl */`
         varying vec3 vW; varying vec3 vN;
         void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vN = normal; gl_Position = projectionMatrix * viewMatrix * w; }`,
@@ -121,14 +121,31 @@ export class SkySystem {
         uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uFogColor;
         uniform float uNear, uFar;
         varying vec3 vW; varying vec3 vN;
+        float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
         void main() {
+          vec3 n = normalize(vN);
           vec3 d = normalize(vW - cameraPosition);
           float dist = length(vW - cameraPosition);
+          float slope = 1.0 - n.y;
+          float nz = vn(vW.xz * 0.02) * 0.6 + vn(vW.xz * 0.11) * 0.4;
+          // лес внизу, скалы на крутых склонах и выше, снег на вершинах
+          vec3 forest = mix(vec3(0.07, 0.11, 0.05), vec3(0.13, 0.17, 0.08), nz);
+          vec3 rock = mix(vec3(0.30, 0.29, 0.27), vec3(0.42, 0.40, 0.37), nz);
+          vec3 snow = vec3(0.86, 0.89, 0.94);
+          float rockK = clamp(smoothstep(0.35, 0.6, slope + nz * 0.2) + smoothstep(120.0, 190.0, vW.y + nz * 30.0), 0.0, 1.0);
+          vec3 col = mix(forest, rock, rockK);
+          float snowK = smoothstep(195.0, 235.0, vW.y + nz * 40.0) * (1.0 - smoothstep(0.55, 0.8, slope));
+          col = mix(col, snow, snowK);
+          // освещение: солнце + небо
+          float ndl = max(dot(n, uSunDir), 0.0);
+          vec3 lit = col * (uSunColor * ndl * 1.1 + mix(uHorizon, uZenith, 0.5) * 0.55);
+          // воздушная перспектива: чем дальше — тем больше цвета неба
           vec3 sky = mix(uHorizon, uZenith, smoothstep(0.03, 0.7, max(d.y, 0.0)));
-          float lit = 0.75 + 0.25 * max(dot(normalize(vN), uSunDir), 0.0);
-          vec3 haze = sky * mix(0.72, 0.9, smoothstep(uNear, uFar * 1.5, dist)) * lit;
-          vec3 col = mix(uFogColor, haze, smoothstep(uNear, uFar, dist));
-          gl_FragColor = vec4(col, 1.0);
+          float air = 1.0 - exp(-dist * 0.00085);
+          vec3 aerial = mix(lit, sky, clamp(0.18 + air * 0.72, 0.0, 0.92));
+          gl_FragColor = vec4(mix(uFogColor, aerial, smoothstep(uNear, uFar, dist)), 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
