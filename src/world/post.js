@@ -63,17 +63,19 @@ const RaysShader = {
 };
 
 export class Post {
-  constructor(renderer, scene, camera) {
+  // lite — телефон: без MSAA, свечение в низком разрешении, меньше выборок у лучей
+  constructor(renderer, scene, camera, lite = false) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: lite ? 0 : 4 });
     this.composer = new EffectComposer(renderer, rt);
     this.composer.addPass(new RenderPass(scene, camera));
-    this.rays = new ShaderPass(RaysShader);
+    this.rays = new ShaderPass({ ...RaysShader, fragmentShader: lite ? RaysShader.fragmentShader.replaceAll('48', '20') : RaysShader.fragmentShader });
     this.composer.addPass(this.rays);
     this.camera = camera;
     this._sp = new THREE.Vector3();
     this._fw = new THREE.Vector3();
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.22, 0.55, 0.92);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / (lite ? 4 : 2), size.y / (lite ? 4 : 2)), 0.22, 0.55, 0.92);
+    this.lite = lite;
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader);

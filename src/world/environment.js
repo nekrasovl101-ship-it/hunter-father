@@ -90,7 +90,7 @@ export class Environment {
 //  • брызги — расходящиеся колечки на земле (высота из карты рельефа).
 export class Precipitation {
   constructor(scene, preset, heightTex) {
-    const big = preset.post ? 1 : preset.grass > 9000 ? 0.6 : 0.3;
+    const big = preset.postLite ? 0.5 : preset.post ? 1 : preset.grass > 9000 ? 0.6 : 0.3;
     this.uniforms = {
       uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uRain: { value: 0 }, uSnow: { value: 0 },
       uColor: { value: new THREE.Color(0.7, 0.75, 0.8) }, uHeight: { value: heightTex },

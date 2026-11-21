@@ -25,7 +25,7 @@ export function createWater(heightTex, preset) {
   const mat = createWaterMaterial(heightTex, preset, false);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.renderOrder = 2;
-  if (reflect) mesh.mirror = new Mirror([mat], WATER_LEVEL);
+  if (reflect) mesh.mirror = new Mirror([mat], WATER_LEVEL, preset.reflectScale);
   return mesh;
 }
 
@@ -175,8 +175,9 @@ export function createWaterMaterial(heightTex, preset, puddle) {
 
 // Планарное отражение относительно плоскости воды (по мотивам three/examples Reflector)
 export class Mirror {
-  constructor(mats, level) {
+  constructor(mats, level, scale = 0.4) {
     this.mats = mats;
+    this.scale = scale;
     this.level = level;
     this.rt = new THREE.WebGLRenderTarget(512, 512, { type: THREE.HalfFloatType });
     this.cam = new THREE.PerspectiveCamera();
@@ -192,7 +193,7 @@ export class Mirror {
   // hide: объекты, которых не должно быть в отражении (трава, вода, ружьё)
   render(renderer, scene, camera, hide) {
     const size = renderer.getDrawingBufferSize(this._size || (this._size = new THREE.Vector2()));
-    const w = Math.round(size.x * 0.5), h = Math.round(size.y * 0.5);
+    const w = Math.round(size.x * this.scale), h = Math.round(size.y * this.scale);
     if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
     const L = this.level;
     if (camera.position.y < L) return;

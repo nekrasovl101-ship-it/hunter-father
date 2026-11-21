@@ -4,7 +4,7 @@ import { Post } from './world/post.js';
 import { Binoculars, Phone } from './ui/gadgets.js';
 import { createPuddles, createPuddleMesh } from './world/puddles.js';
 import { Environment, Precipitation, seasonFor, seasonVector, SEASONS, WEATHER_NAMES } from './world/environment.js';
-import { PRESETS, loadSettings, saveSettings, isTouch } from './config/settings.js';
+import { PRESETS, getPreset, loadSettings, saveSettings, isTouch } from './config/settings.js';
 import { VEHICLES } from './config/models.js';
 import { initTextures, loadSet } from './core/textures.js';
 import { Input } from './core/input.js';
@@ -24,7 +24,7 @@ import { AnimalViews } from './entities/animals.js';
 import { Hud } from './ui/hud.js';
 import { World } from '../shared/world.js';
 import { AnimalSim, SPECIES, isBlocked } from '../shared/animals.js';
-import { SITES, riverDist } from '../shared/terrain.js';
+import { SITES, riverDist, riverX } from '../shared/terrain.js';
 import { Net, createRoom, leaderboard } from './net/net.js';
 import { RemoteHunters } from './entities/hunters.js';
 import { ROOM_VEHICLES, SPECIES_IDS, ANIMS, SEND_MS, CODE_LEN, MAX_PLAYERS } from '../shared/protocol.js';
@@ -55,20 +55,22 @@ class Game {
   }
 
   async init(onProgress) {
-    const preset = (this.preset = PRESETS[settings.quality] || PRESETS.medium);
+    const preset = (this.preset = getPreset(settings.quality));
     this.season = seasonFor(settings.season);
     this.shared.uSeason.value.copy(seasonVector(this.season));
     this.env = new Environment(settings, this.season, this.shared);
     const canvas = $('#game');
     // если видеокарта занята (много вкладок с 3D) — пробуем ещё раз с щадящими настройками
     let renderer;
-    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.antialias, powerPreference: 'high-performance' }); }
+    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.msaa ?? preset.antialias, powerPreference: 'high-performance' }); }
     catch {
       try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false }); }
       catch { throw new Error('WEBGL'); }
     }
     this.renderer = renderer;
-    renderer.setPixelRatio(Math.min(devicePixelRatio, preset.pixelRatio));
+    this.basePixelRatio = Math.min(devicePixelRatio, preset.pixelRatio);
+    this.resScale = 1;
+    renderer.setPixelRatio(this.basePixelRatio);
     renderer.setSize(innerWidth, innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
@@ -183,7 +185,11 @@ class Game {
     this.player.update(0, this.input, 0);
     this.trees.update(camera.position, true);
     this.rocks.update(camera.position, true);
-    if (preset.post) { this.post = new Post(renderer, scene, camera); renderer.info.autoReset = false; }
+    if (preset.post) { this.post = new Post(renderer, scene, camera, !!preset.postLite); renderer.info.autoReset = false; }
+    // тени: на телефоне пересчитываются через кадр
+    renderer.shadowMap.autoUpdate = false;
+    this._frameN = 0;
+    this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
     this.resize();
     renderer.compile(scene, camera);
     onProgress(1, 'Готово');
@@ -260,6 +266,38 @@ class Game {
       }
     } else if (res && res.wallDist < 450) {
       this.impacts.spawn(o.clone().addScaledVector(dir, res.wallDist - 0.05), 0x6b5a40, 12);
+    }
+  }
+
+  // видна ли река в кадре (проверяем точки русла вокруг камеры)
+  riverInView(cp) {
+    this._frustum ||= new THREE.Frustum(); this._pm ||= new THREE.Matrix4();
+    this.camera.updateMatrixWorld(); this._frustum.setFromProjectionMatrix(this._pm.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+    const sp = this._rsph ||= new THREE.Sphere(new THREE.Vector3(), 14);
+    for (let dz = -this.preset.viewDist; dz <= this.preset.viewDist; dz += 18) {
+      const z = cp.z + dz;
+      sp.center.set(riverX(z), 0, z);
+      if (this._frustum.intersectsSphere(sp)) return true;
+    }
+    return false;
+  }
+
+  // ---------- авто-разрешение: держим плавность, снижая/повышая чёткость картинки ----------
+  adaptResolution(dt) {
+    this._fpsAcc += dt; this._fpsN++;
+    this._resT += dt;
+    if (this._resT < 1.5) return;
+    const fps = this._fpsN / this._fpsAcc;
+    this._fpsAcc = 0; this._fpsN = 0; this._resT = 0;
+    const target = isTouch ? 45 : 55;
+    let s = this.resScale;
+    if (fps < target - 3) s = Math.max(0.55, s * (fps < target * 0.7 ? 0.82 : 0.92));
+    else if (fps > target + 8 || (fps > 58 && s < 1)) s = Math.min(1, s * 1.06);
+    if (Math.abs(s - this.resScale) > 0.01) {
+      this.resScale = s;
+      this.renderer.setPixelRatio(this.basePixelRatio * s);
+      this.renderer.setSize(innerWidth, innerHeight);
+      this.post?.setSize(innerWidth, innerHeight);
     }
   }
 
@@ -638,17 +676,25 @@ class Game {
     this.updateHouseLight(dt);
     this.phone.update(dt, this.phoneState());
 
-    if (this.water.mirror && riverDist(cp.x, cp.z) < this.preset.viewDist) {
+    if (this.water.mirror && riverDist(cp.x, cp.z) < this.preset.viewDist && this.riverInView(cp)) {
       this.water.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root, this.puddleMesh].filter(Boolean));
     }
-    // отражение в ближайшей луже (своя плоскость на её уровне)
+    // отражение в ближайшей луже (своя плоскость на её уровне) — только если она в кадре
     if (this.puddleMesh?.mirror) {
       const lvl = this.puddleMesh.nearestLevel(cp);
-      if (lvl !== null) {
+      this._frustum ||= new THREE.Frustum(); this._pm ||= new THREE.Matrix4();
+      this.camera.updateMatrixWorld(); this._frustum.setFromProjectionMatrix(this._pm.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+      this._sph ||= new THREE.Sphere(new THREE.Vector3(), 6);
+      if (lvl !== null) this._sph.center.copy(this.puddleMesh.nearestPos);
+      const inView = lvl !== null && this._frustum.intersectsSphere(this._sph);
+      if (lvl !== null && inView) {
         this.puddleMesh.mirror.level = lvl;
         this.puddleMesh.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root, this.puddleMesh]);
       }
     }
+    this._frameN++;
+    if (this._frameN % (this.preset.shadowEvery || 1) === 0) this.renderer.shadowMap.needsUpdate = true;
+    this.adaptResolution(dt);
     if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night), this.sky.sunset); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
   }
@@ -656,7 +702,7 @@ class Game {
   updateHud(dt) {
     const hud = this.hud;
     hud.update(dt, { gun: this.gun, yaw: this.driving ? this.driving.heading + Math.PI : this.player.yaw, score: this.score, kills: this.kills, showFps: settings.showFps });
-    if (settings.showFps) hud.fps.textContent = hud.fps.textContent.replace(/ ·.*$/, '') + ` · ${this.renderer.info.render.calls} dc`;
+    if (settings.showFps) hud.fps.textContent = hud.fps.textContent.replace(/ ·.*$/, '') + ` · ${this.renderer.info.render.calls} dc · ${Math.round(this.resScale * 100)}%`;
     $('#health-bar').style.width = `${this.player.health}%`;
     if (this.net) {
       const tag = `Комната <b>${this.net.code}</b> · ${this.roster.size}/${MAX_PLAYERS} · ${Math.round(this.net.rtt)} мс`;
@@ -700,7 +746,7 @@ function setupMenu() {
   const warnUltra = (sel) => sel.addEventListener('change', () => {
     if (sel.value !== 'ultra') return;
     $('#ultra-text').textContent = isTouch
-      ? 'Этот режим сделан для компьютеров с видеокартой. На телефоне лучше не включать: телефон может сильно нагреться, игра будет тормозить, а Safari может перезагрузить страницу.'
+      ? 'На телефоне включится облегчённая «Ультра»: отражения в воде, лучи солнца, густая трава. Телефон может заметно нагреваться и быстрее садиться. Если будет тормозить — игра сама снизит чёткость, а лучше выбрать «Высокую».'
       : 'Вы точно хотите включить «Ультру»? Это максимальная графика: отражения в воде, лучи солнца, 2K-текстуры. Компьютер может немного нагреваться и шуметь вентиляторами, нужна хорошая видеокарта.';
     $('#ultra-cancel').textContent = isTouch ? 'Оставить «Среднюю»' : 'Оставить «Высокую»';
     $('#ultra-ok').textContent = isTouch ? 'Всё равно включить' : 'Да, включить «Ультру»';
