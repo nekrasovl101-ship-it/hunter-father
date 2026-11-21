@@ -17,9 +17,9 @@ export const PRESETS = {
   },
   ultra: {
     label: 'Ультра (не для телефонов)', pixelRatio: 2.5, antialias: true, shadows: true, shadowMap: 4096,
-    terrainSeg: 448, normalMaps: true, grass: 60000, grassDist: 72,
+    terrainSeg: 448, normalMaps: true, grass: 70000, grassDist: 72,
     treeHi: 150, viewDist: 480, shadowDist: 100, softShadows: true, aniso: 16,
-    hdTextures: true, post: true, grassBlades: 9,
+    hdTextures: true, post: true, grassBlades: 13,
   },
 };
 

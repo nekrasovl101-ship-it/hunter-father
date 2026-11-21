@@ -26,7 +26,15 @@ export class Hud {
     this.compass.innerHTML = html;
   }
 
-  show(v) { this.el.classList.toggle('hidden', !v); }
+  show(v) {
+    this.el.classList.toggle('hidden', !v);
+    // панель инвентаря и телефон вынесены поверх сенсорного слоя (иначе на телефоне касания до них не доходят)
+    for (const id of ['#hotbar', '#phone']) {
+      const el = document.querySelector(id);
+      if (el && el.parentElement !== document.body) document.body.appendChild(el);
+      el?.classList.toggle('gone', !v);
+    }
+  }
 
   update(dt, { gun, yaw, score, kills, showFps }) {
     const bullets = '▮'.repeat(gun.ammo) + '▯'.repeat(MAG_SIZE - gun.ammo);

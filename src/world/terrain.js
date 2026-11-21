@@ -29,6 +29,10 @@ export class Ground {
 const FRAG_PRELUDE = /* glsl */`
 uniform sampler2D tForestA, tMudA, tRockA, tMeadowA;
 uniform vec4 uSeason;
+uniform float uTime, uRain;
+#ifdef HAS_PUDDLES
+uniform sampler2D tPuddle;
+#endif
 #ifdef HAS_SNOW
 uniform sampler2D tSnowA, tSnowN, tSnowR;
 #endif
@@ -102,10 +106,22 @@ float cover = max(0.0, (1.0 - vSplat.y * 0.75) * (1.0 - vSplat.z * 0.85) * (0.75
 sn = smoothstep(0.05, 0.35, cover + (dot(colS, vec3(0.33)) - 0.75) * 0.6 + (tNoise(vTerrWorld.xz * 0.5) - 0.5) * 0.25);
 alb = mix(alb, colS * vec3(0.97, 0.99, 1.03), sn);
 #endif
-// мокрая земля темнее, в низинах — лужи
+// лужи: на «Высокой»/«Ультре» — по общей карте луж (с ней же совпадает звук шагов),
+// иначе — только во время дождя. Края рваные, вокруг — тёмная мокрая кромка, в дождь — круги от капель.
+vec2 rip = vec2(0.0);
+#ifdef HAS_PUDDLES
+float pm = texture2D(tPuddle, (vTerrWorld.xz + 400.0) / 800.0).r;
+float pn = (tNoise(vTerrWorld.xz * 1.3) - 0.5) * 0.22 + (tNoise(vTerrWorld.xz * 5.0) - 0.5) * 0.06;
+// сама вода — отдельный меш (как река); здесь только тёмная мокрая земля вокруг и под ней
+float puddle = 0.0;
+float rim = (1.0 - sn) * smoothstep(0.15, 0.5, pm + pn);
+alb *= 1.0 - rim * 0.5;
+#else
 float puddle = uSeason.w * (1.0 - sn) * (sw.z + sw.y * 0.5 + sw.x * 0.3) * smoothstep(0.64, 0.7, tNoise(vTerrWorld.xz * 0.11) * 0.7 + tNoise(vTerrWorld.xz * 0.43) * 0.3) * (1.0 - sw.w) * (1.0 - sw.y * 0.6);
+#endif
 alb *= 1.0 - uSeason.w * 0.32 * (1.0 - sn);
-alb = mix(alb, alb * 0.35, puddle);
+// вода в луже почти чёрная — цвет даёт отражение неба
+alb = mix(alb, alb * 0.18, puddle);
 diffuseColor.rgb *= alb;
 `;
 
@@ -144,7 +160,7 @@ const NORMAL_SAMPLE = (snow, leaves) => {
   let e = `(texture2D(normalMap, uvG) * sw.x + texture2D(tForestN, uvF) * sw.y + texture2D(tMudN, uvM) * sw.z + texture2D(tRockN, uvR) * sw.w)`;
   if (leaves) e = `mix(${e}, texture2D(tLeafN, uvL), leafK)`;
   if (snow) e = `mix(${e}, texture2D(tSnowN, uvS), sn)`;
-  return `mix(${e}, vec4(0.5, 0.5, 1.0, 1.0), puddle)`; // в луже поверхность гладкая
+  return `mix(${e}, vec4(0.5 + rip.x, 0.5 + rip.y, 1.0, 1.0), puddle)`; // в луже гладко (+ круги от капель)
 };
 
 // толщина снега и где он лежит (то же самое считает шейдер по splat)
@@ -154,7 +170,7 @@ function snowCover(sp) {
   return Math.max(0, (1 - mud * 1.3) * (1 - rock * 0.85) * (0.75 + 0.5 * macro) * (1 - forest * 0.3));
 }
 
-export function createTerrain(preset, sets, shared) {
+export function createTerrain(preset, sets, shared, puddleFn) {
   const seg = preset.terrainSeg;
   const ground = new Ground(seg);
   const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, seg, seg);
@@ -199,12 +215,17 @@ export function createTerrain(preset, sets, shared) {
   });
   if (preset.normalMaps) mat.normalScale.set(0.9, 0.9);
   mat.envMapIntensity = 0.55;
+  // карта луж (только «Высокая»/«Ультра» — там есть отражение неба)
+  const puddles = preset.antialias && !winter ? puddleFn(ground) : null;
+  if (puddles) mat.defines = { ...mat.defines, HAS_PUDDLES: '' };
   if (sets.snow) mat.defines = { ...mat.defines, HAS_SNOW: '' };
   if (sets.leaves) mat.defines = { ...mat.defines, HAS_LEAVES: '' };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, {
       tMeadowA: { value: sets.meadow.albedo },
       uSeason: shared.uSeason,
+      uTime: shared.uTime, uRain: shared.uRain,
+      tPuddle: { value: puddles?.tex || null },
       tForestA: { value: sets.forest.albedo }, tMudA: { value: sets.mud.albedo }, tRockA: { value: sets.rock.albedo },
       tGrassR: { value: sets.grass.rough }, tForestR: { value: sets.forest.rough },
       tMudR: { value: sets.mud.rough }, tRockR: { value: sets.rock.rough },
@@ -220,7 +241,9 @@ export function createTerrain(preset, sets, shared) {
       .replace('#include <map_fragment>', MAP_FRAGMENT)
       .replace('#include <roughnessmap_fragment>', ROUGH_FRAGMENT)
       .replace('#include <emissivemap_fragment>', SPARKLE)
-      .replaceAll('texture2D( normalMap, vNormalMapUv )', NORMAL_SAMPLE(!!sets.snow, !!sets.leaves));
+      // лужа отражает небо сильнее, чем матовая земля
+      .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n#if defined( RE_IndirectSpecular )\nradiance *= mix(1.0, 2.6, puddle);\n#endif')
+      ;
   };
 
   const mesh = new THREE.Mesh(geo, mat);
@@ -232,7 +255,7 @@ export function createTerrain(preset, sets, shared) {
   const far = new THREE.Mesh(farMountains(preset), new THREE.MeshBasicMaterial({ color: 0x4d5a33 }));
   far.matrixAutoUpdate = false;
 
-  return { mesh, far, ground, heightTex };
+  return { mesh, far, ground, heightTex, puddles };
 }
 
 function ridged(x, z) {

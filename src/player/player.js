@@ -68,7 +68,7 @@ export class Player {
     this.speed = Math.hypot(this.vel.x, this.vel.z);
     if (this.onGround && this.speed > 1) {
       this.stepT += dt * this.speed * 0.55;
-      if (this.stepT > 1) { this.stepT = 0; this.sound.step(inWater); }
+      if (this.stepT > 1) { this.stepT = 0; if (!inWater && this.puddleAt?.(this.pos.x, this.pos.z)) this.sound.splashStep(); else this.sound.step(inWater); }
     }
 
     const bob = this.onGround ? Math.sin(performance.now() * 0.001 * (4 + this.speed * 1.4)) * Math.min(this.speed, 7) * 0.012 * (1 - aimT) : 0;

@@ -7,14 +7,18 @@ import { mulberry32 } from '../../shared/world.js';
 // берутся из текстуры высот. Ветер и примятие игроком — в вершинном шейдере.
 
 // Пучок изогнутых травинок. color.r — доля высоты (0 у корня, 1 у кончика).
-function bladeClump(rnd, blades) {
+function bladeClump(rnd, blades, fine = false) {
   const pos = [], col = [], idx = [];
   for (let b = 0; b < blades; b++) {
-    const ox = (rnd() - 0.5) * 0.45, oz = (rnd() - 0.5) * 0.45;
+    // «Ультра»: узкие длинные травинки разной высоты (как настоящий луг), плотнее у центра пучка
+    const spread = fine ? 0.55 * Math.sqrt(rnd()) : 0.45;
+    const ang = rnd() * Math.PI * 2;
+    const ox = fine ? Math.cos(ang) * spread * 0.5 : (rnd() - 0.5) * 0.45, oz = fine ? Math.sin(ang) * spread * 0.5 : (rnd() - 0.5) * 0.45;
     const a = rnd() * Math.PI * 2;
     const cx = Math.cos(a), sz = Math.sin(a);
-    const w = 0.02 + rnd() * 0.016, h = 0.3 + rnd() * 0.4;
-    const curve = 0.08 + rnd() * 0.22;
+    const w = fine ? 0.007 + rnd() * 0.009 : 0.02 + rnd() * 0.016;
+    const h = fine ? 0.18 + Math.pow(rnd(), 1.6) * 0.62 : 0.3 + rnd() * 0.4;
+    const curve = fine ? 0.04 + rnd() * 0.3 : 0.08 + rnd() * 0.22;
     const start = pos.length / 3;
     const rows = [[0, 1], [0.4, 0.88], [0.75, 0.55]];
     for (const [t, ww] of rows) {
@@ -60,7 +64,7 @@ function flowerGeo() {
   return g;
 }
 
-function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
+function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fine = false) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
   geo.setAttribute('position', base.attributes.position);
@@ -85,6 +89,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
     uSeason: shared.uSeason,
   };
   const mat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+  if (fine) mat.defines = { FINE_GRASS: '' };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
@@ -131,9 +136,16 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers) {
         float dry = smoothstep(0.45, 0.8, hs.a) * 0.75 + fract(aOff.w * 13.7) * 0.25;
         dry = mix(dry, 0.75 + dry * 0.5, max(uSeason.x, uSeason.y));
         dry *= 1.0 - uSeason.z * 0.6;
+        #ifdef FINE_GRASS
+        // приглушённые природные цвета: тёмный низ, оливково-зелёные кончики, у части — соломенные
+        vec3 baseC = vec3(0.012, 0.022, 0.006);
+        vec3 tipLush = mix(vec3(0.07, 0.11, 0.03), vec3(0.11, 0.14, 0.045), color.b);
+        vec3 tipDry = mix(vec3(0.2, 0.17, 0.08), vec3(0.26, 0.22, 0.12), color.b);
+        #else
         vec3 baseC = vec3(0.025, 0.05, 0.012);
         vec3 tipLush = vec3(0.13, 0.22, 0.04);
         vec3 tipDry = vec3(0.30, 0.27, 0.10);
+        #endif
         vec3 tip = mix(tipLush, tipDry, dry * 0.8) * (0.8 + 0.4 * fract(aOff.w * 31.1));
         vGrassCol = mix(baseC, tip, smoothstep(0.0, 0.9, t)) * mix(1.0, 0.7, hs.b);
         vGrassCol *= 1.0 - uSeason.w * 0.25;
@@ -160,7 +172,7 @@ export function createGrass(preset, heightTex, shared) {
   const rnd = mulberry32(777);
   const group = new THREE.Group();
   const tile = preset.grassDist * 2.1;
-  const grass = makeLayer(bladeClump(rnd, preset.grassBlades || 7), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false);
+  const grass = makeLayer(bladeClump(rnd, preset.grassBlades || 7, !!preset.post), preset.grass, tile, preset.grassDist, heightTex, shared, rnd, false, !!preset.post);
   const flowers = makeLayer(flowerGeo(), Math.round(preset.grass * 0.12), tile, preset.grassDist * 0.8, heightTex, shared, rnd, true);
   group.add(grass, flowers);
   group.update = (camPos, playerPos) => {

@@ -188,3 +188,7 @@ body:has(#touch:not(.hidden)) #hotbar { top: 52px; transform: none; gap: 2px; pa
 body:has(#touch:not(.hidden)) #hotbar .slot { width: 30px; height: 30px; }
 body:has(#touch:not(.hidden)) #hotbar .slot .ico { font-size: 15px; }
 body:has(#touch:not(.hidden)) #hotbar .slot i { display: none; }
+
+/* инвентарь и телефон лежат поверх сенсорного слоя (#touch z-index 11) */
+#hotbar, #phone { position: fixed; z-index: 13; }
+#hotbar.gone, #phone.gone { display: none; }

@@ -99,6 +99,22 @@ export class Sound {
   crash(k) { this._noise(0.5, { freq: 700, q: 0.5, gain: Math.min(1.2, 0.3 + k * 0.06), decay: 0.4 }); }
   bite() { this._noise(0.15, { freq: 1600, q: 2, type: 'bandpass', gain: 0.6, decay: 0.12 }); this._noise(0.3, { freq: 300, gain: 0.5, decay: 0.25, when: 0.03 }); }
 
+  // шаг по луже: всплеск (шлепок + брызги) и пара капель
+  splashStep() {
+    if (!this.ctx) return;
+    this._noise(0.09, { freq: 420, q: 0.8, gain: 0.32, decay: 0.07 });
+    this._noise(0.22, { freq: 2600, q: 0.9, type: 'bandpass', gain: 0.28 + Math.random() * 0.1, decay: 0.18, when: 0.015 });
+    this._noise(0.12, { freq: 5200, q: 1.2, type: 'bandpass', gain: 0.08, decay: 0.1, when: 0.05 });
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (let i = 0; i < 2; i++) {
+      const o = ctx.createOscillator(); o.type = 'sine';
+      const s = t + 0.06 + i * 0.07 + Math.random() * 0.05, f = 900 + Math.random() * 700;
+      o.frequency.setValueAtTime(f, s); o.frequency.exponentialRampToValueAtTime(f * 1.8, s + 0.04);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(0.05, s + 0.005); g.gain.exponentialRampToValueAtTime(0.0005, s + 0.06);
+      o.connect(g); g.connect(this.master); o.start(s); o.stop(s + 0.07);
+    }
+  }
+
   // шум дождя: громкость 0..1
   rain(level) {
     const ctx = this.ctx;

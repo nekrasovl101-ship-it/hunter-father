@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { Post } from './world/post.js';
 import { Binoculars, Phone } from './ui/gadgets.js';
+import { createPuddles, createPuddleMesh } from './world/puddles.js';
 import { Environment, Precipitation, seasonFor, seasonVector, SEASONS, WEATHER_NAMES } from './world/environment.js';
 import { PRESETS, loadSettings, saveSettings, isTouch } from './config/settings.js';
 import { VEHICLES } from './config/models.js';
@@ -47,7 +48,7 @@ class Game {
     this.running = false;
     this.paused = false;
     this.clock = new THREE.Clock();
-    this.shared = { uTime: { value: 0 }, uSeason: { value: new THREE.Vector4() } };
+    this.shared = { uTime: { value: 0 }, uSeason: { value: new THREE.Vector4() }, uRain: { value: 0 } };
     this.vehicles = [];
     this.driving = null;
     this.damageT = 0;
@@ -95,10 +96,12 @@ class Game {
     onProgress(0.35, 'Генерация леса…');
     await new Promise((r) => setTimeout(r, 0));
     this.world = new World();
-    const terrain = createTerrain(preset, sets, this.shared);
+    const terrain = createTerrain(preset, sets, this.shared, createPuddles);
+    this.puddles = terrain.puddles;
     this.ground = terrain.ground;
     scene.add(terrain.mesh, terrain.far);
     this.water = createWater(terrain.heightTex, preset);
+    if (this.puddles) { this.puddleMesh = createPuddleMesh(this.puddles, terrain.heightTex, preset); scene.add(this.puddleMesh); }
     scene.add(this.water);
     this.grass = createGrass(preset, terrain.heightTex, this.shared);
     scene.add(this.grass);
@@ -126,6 +129,8 @@ class Game {
     this.input.onLockChange = (locked) => { if (!locked && this.running && !isTouch) this.pause(true); };
     addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.input.dragLook && this.running) this.pause(!this.paused); });
     this.player = new Player(camera, this.ground, this.world, this.sound);
+    // шаги по лужам: та же карта, что рисует лужи
+    if (this.puddles) this.player.puddleAt = (x, z) => this.puddles.wetAt(x, z);
     this.gun = new Rifle(camera, this.sound);
     this.vcam = new VehicleCamera(camera);
     this.views = new AnimalViews(scene, this.ground, preset);
@@ -574,6 +579,7 @@ class Game {
       this.trees.setLight(this.sky.light);
       this.buildings.setEvening(Math.max(this.sky.night, env.weather.cloud * 0.3 * (1 - this.sky.light)));
     }
+    this.shared.uRain.value = env.weather.rain;
     this.sky.updateEnv(this.renderer, dt);
     this.precip.update(dt, this.camera.position, env.weather, this.sky.hemi.color, this.renderer.getPixelRatio() * innerHeight / 600);
     this.sound.rain(this.paused ? 0 : env.weather.rain);
@@ -618,17 +624,30 @@ class Game {
     this.trees.update(cp);
     this.rocks.update(cp);
     this.sky.update(cp, t);
-    this.water.material.uniforms.uTime.value = t;
-    this.water.material.uniforms.uSunDir.value.copy(this.sky.sunDir);
-    this.water.material.uniforms.uSunColor.value.copy(this.sky.sun.color);
-    this.water.material.uniforms.uSkyColor.value.copy(this.sky.uniforms.uHorizon.value);
+    for (const w of [this.water, this.puddleMesh]) {
+      if (!w) continue;
+      const u = w.material.uniforms;
+      u.uTime.value = t;
+      u.uSunDir.value.copy(this.sky.sunDir);
+      u.uSunColor.value.copy(this.sky.sun.color);
+      u.uSkyColor.value.copy(this.sky.uniforms.uHorizon.value);
+      u.uRain.value = this.env.weather.rain;
+    }
     this.impacts.update(dt);
     this.binoc.update(dt, () => this.rangefinder());
     this.updateHouseLight(dt);
     this.phone.update(dt, this.phoneState());
 
     if (this.water.mirror && riverDist(cp.x, cp.z) < this.preset.viewDist) {
-      this.water.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root]);
+      this.water.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root, this.puddleMesh].filter(Boolean));
+    }
+    // отражение в ближайшей луже (своя плоскость на её уровне)
+    if (this.puddleMesh?.mirror) {
+      const lvl = this.puddleMesh.nearestLevel(cp);
+      if (lvl !== null) {
+        this.puddleMesh.mirror.level = lvl;
+        this.puddleMesh.mirror.render(this.renderer, this.scene, this.camera, [this.water, this.grass, this.gun.root, this.puddleMesh]);
+      }
     }
     if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night)); } else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
