@@ -19,6 +19,18 @@ export class Player {
     this.baseFov = camera.fov;
     this.health = 100;
     this.platform = null;   // {x, z, y, r} — стоим на вышке
+    this.dirt = 0;          // 0..1 — насколько охотник в грязи
+    this.fallT = 0;         // > 0 — лежит после падения
+  }
+
+  // падение: поскользнулся в грязи (slip) или неудачно приземлился с высоты (high)
+  fall(kind) {
+    if (this.fallT > 0) return;
+    this.fallT = 1.7;
+    this.fallKind = kind;
+    this.vel.x *= 0.25; this.vel.z *= 0.25;
+    this.dirt = Math.min(1, this.dirt + (kind === 'slip' ? 0.45 : 0.28));
+    this.onFall?.(kind);
   }
 
   update(dt, input, aimT, binocT = 0) {
@@ -40,7 +52,9 @@ export class Player {
     if (aimT > 0.5 || binocT > 0.5) max = 2.2;
     if (inWater) max *= 0.45;
 
-    const f = input.move.y, s = input.move.x;
+    // пока лежишь после падения — не управляешь, только встаёшь
+    if (this.fallT > 0) { this.fallT -= dt; max = 0; }
+    const f = this.fallT > 0 ? 0 : input.move.y, s = this.fallT > 0 ? 0 : input.move.x;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     // вперёд = -Z камеры
     const wx = (-sin * f + cos * s) * max;
@@ -49,7 +63,7 @@ export class Player {
     this.vel.x += (wx - this.vel.x) * Math.min(1, dt * accel);
     this.vel.z += (wz - this.vel.z) * Math.min(1, dt * accel);
 
-    if (input.consume('jump') && this.onGround && !inWater) { this.vel.y = 6.5; this.onGround = false; }
+    if (input.consume('jump') && this.onGround && !inWater && this.fallT <= 0) { this.vel.y = 6.5; this.onGround = false; }
     this.vel.y -= GRAVITY * dt;
 
     this.pos.x += this.vel.x * dt;
@@ -62,19 +76,42 @@ export class Player {
     } else this.world.collide(this.pos, 0.35);
     this.pos.y += this.vel.y * dt;
     const g = this.platform ? this.platform.y : this.ground.sample(this.pos.x, this.pos.z);
-    if (this.pos.y <= g) { this.pos.y = g; this.vel.y = 0; this.onGround = true; }
+    if (this.pos.y <= g) {
+      // тяжёлое приземление (прыжок с вышки, обрыв) — падаешь
+      if (!this.onGround && this.vel.y < -11.5) this.fall('high');
+      this.pos.y = g; this.vel.y = 0; this.onGround = true;
+    }
     else if (this.pos.y > g + 0.3) this.onGround = false;
     else if (this.onGround) this.pos.y = g; // прилипание при спуске
 
     this.speed = Math.hypot(this.vel.x, this.vel.z);
+    if (inWater) this.dirt = Math.max(0, this.dirt - dt * 0.25);   // в реке грязь смывается
     if (this.onGround && this.speed > 1) {
       this.stepT += dt * this.speed * 0.55;
-      if (this.stepT > 1) { this.stepT = 0; if (!inWater && this.puddleAt?.(this.pos.x, this.pos.z)) this.sound.splashStep(); else this.sound.step(inWater); }
+      if (this.stepT > 1) {
+        this.stepT = 0;
+        const puddle = !inWater && this.puddleAt?.(this.pos.x, this.pos.z);
+        if (puddle) {
+          this.sound.splashStep();
+          this.dirt = Math.min(1, this.dirt + 0.025);           // брызги на ботинки и штаны
+          if (this.speed > 5.8 && Math.random() < 0.2) this.fall('slip');   // на бегу по грязи можно поскользнуться
+        } else this.sound.step(inWater);
+      }
     }
 
     const bob = this.onGround ? Math.sin(performance.now() * 0.001 * (4 + this.speed * 1.4)) * Math.min(this.speed, 7) * 0.012 * (1 - aimT) : 0;
-    this.camera.position.set(this.pos.x, this.pos.y + EYE + bob, this.pos.z);
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    // падение: камера резко уходит к земле с креном, полежал — поднимаешься
+    let eye = EYE, roll = 0, tilt = 0;
+    if (this.fallT > 0) {
+      const t = 1.7 - this.fallT;
+      const k = THREE.MathUtils.smoothstep(t, 0, 0.22) * (1 - THREE.MathUtils.smoothstep(t, 1.05, 1.7));
+      eye = EYE * (1 - 0.74 * k);
+      roll = k * (this.fallKind === 'slip' ? 0.55 : -0.4);
+      tilt = k * (this.fallKind === 'slip' ? 0.35 : -0.25);
+    }
+    this.fallK = eye < EYE ? 1 - eye / EYE : 0;
+    this.camera.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
+    this.camera.rotation.set(this.pitch + tilt, this.yaw, roll, 'YXZ');
     const fov = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.baseFov, aimFov, aimT * aimT), 9, binocT * binocT);
     if (Math.abs(fov - this.camera.fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
   }

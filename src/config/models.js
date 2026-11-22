@@ -24,7 +24,7 @@ export const MODELS = {
   // Другие охотники в онлайне (Quaternius Adventurer, CC0)
   hunter: {
     url: 'models/hunter.glb', height: 1.8, yaw: 0,
-    anims: { idle: ['Idle_Gun', 'Idle'], walk: ['Walk'], run: ['Run'], aim: ['Idle_Gun_Pointing'], shoot: ['Idle_Gun_Shoot', 'Gun_Shoot'], death: ['Death'] },
+    anims: { idle: ['Idle_Gun', 'Idle'], walk: ['Walk'], run: ['Run'], aim: ['Idle_Gun_Pointing'], shoot: ['Idle_Gun_Shoot', 'Gun_Shoot'], death: ['Death'], fall: ['HitRecieve_2', 'HitRecieve'] },
     // куда «вкладывать» ружьё: кость и смещение/поворот относительно неё
     rifle: { bone: 'WristR', pos: [0, 0.08, 0.02], rot: [0, 0, -Math.PI / 2] },
   },

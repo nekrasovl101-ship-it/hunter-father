@@ -131,8 +131,10 @@ export function createWaterMaterial(heightTex, preset, puddle) {
         float depth = max(vWorld.y - bed, 0.0);
         #ifdef PUDDLE
         // мелкая мутноватая вода: дно почти не видно уже через 10–15 см
-        float dk = smoothstep(0.0, 0.12, depth);
-        vec3 body = mix(vec3(0.09, 0.075, 0.05), vec3(0.025, 0.022, 0.018), dk);
+        // мутная вода с взвесью глины: у края светлая жёлто-бурая, в глубине тёмно-коричневая
+        float dk = smoothstep(0.0, 0.08, depth);
+        float silt = vn(vWorld.xz * 0.9) * 0.6 + vn(vWorld.xz * 3.1) * 0.4;
+        vec3 body = mix(vec3(0.2, 0.15, 0.085) * (0.85 + 0.3 * silt), vec3(0.055, 0.042, 0.026), dk);
         #else
         float dk = smoothstep(0.0, 1.2, depth);
         vec3 body = mix(uShallow, uDeep, dk);
@@ -159,7 +161,7 @@ export function createWaterMaterial(heightTex, preset, puddle) {
         // край лужи — по карте луж с рваным шумом (а не по клеткам), плюс там, где земля выходит из воды
         float m = texture2D(uMask, (vWorld.xz + uHalf) / uWorld).r + (vn(vWorld.xz * 1.1) - 0.5) * 0.35 + (vn(vWorld.xz * 4.0) - 0.5) * 0.12;
         float edge = smoothstep(0.24, 0.34, m);
-        float alpha = (mix(0.35, 0.96, dk) + fres * 0.4) * smoothstep(0.0, 0.025, depth) * edge;
+        float alpha = (mix(0.6, 0.97, dk) + fres * 0.4) * smoothstep(0.0, 0.02, depth) * edge;
         if (alpha < 0.01) discard;
         #else
         float alpha = mix(0.25, 0.94, dk) + fres * 0.4 + foam * 0.5;

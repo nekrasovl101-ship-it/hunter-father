@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { Post } from './world/post.js';
 import { Vision } from './world/vision.js';
+import { SelfBody } from './entities/hunters.js';
 import { HEAT } from './entities/assets.js';
 import { Binoculars, Phone } from './ui/gadgets.js';
 import { createPuddles, createPuddleMesh } from './world/puddles.js';
@@ -26,7 +27,7 @@ import { AnimalViews } from './entities/animals.js';
 import { Hud } from './ui/hud.js';
 import { World } from '../shared/world.js';
 import { AnimalSim, SPECIES, isBlocked } from '../shared/animals.js';
-import { SITES, riverDist, riverX } from '../shared/terrain.js';
+import { SITES, riverDist, riverX, roadDist, ROAD_HALF, WATER_LEVEL } from '../shared/terrain.js';
 import { Net, createRoom, leaderboard } from './net/net.js';
 import { RemoteHunters } from './entities/hunters.js';
 import { ROOM_VEHICLES, SPECIES_IDS, ANIMS, SEND_MS, CODE_LEN, MAX_PLAYERS } from '../shared/protocol.js';
@@ -140,6 +141,16 @@ class Game {
     this.player = new Player(camera, this.ground, this.world, this.sound);
     // шаги по лужам: та же карта, что рисует лужи
     if (this.puddles) this.player.puddleAt = (x, z) => this.puddles.wetAt(x, z);
+    // своё тело (вид от третьего лица) и падения в грязь
+    this.body = new SelfBody(scene, preset);
+    this.tp = false;
+    this.mudFlash = 0;
+    this.player.onFall = (kind) => {
+      this.sound.crash(kind === 'slip' ? 4 : 6);
+      if (kind === 'slip') this.sound.splashStep();
+      this.mudFlash = kind === 'slip' ? 1 : 0.6;
+      this.hud.message(kind === 'slip' ? 'Вы поскользнулись и упали в грязь!' : 'Неудачное приземление — вы упали', 'warn');
+    };
     this.gun = new Rifle(camera, this.sound);
     this.vcam = new VehicleCamera(camera);
     this.views = new AnimalViews(scene, this.ground, preset);
@@ -163,6 +174,7 @@ class Game {
     for (const rv of list) {
       const v = await Vehicle.create(rv.key, this.world, this.ground, rv.x, rv.z, rv.heading);
       v.netId = rv.id;
+      v.dirt = 0.12 + ((rv.id * 37) % 10) / 40;   // машины у хуторов уже немного в грязи
       const wv = this.net ? this.welcome.vehicles.find((q) => q.id === rv.id) : null;
       v.remoteDriver = wv?.driver || 0;
       v.seats = wv?.seats ? [...wv.seats] : [0, 0, 0, 0];
@@ -342,6 +354,47 @@ class Game {
     k(L.mid, lvl >= 4 ? 0.8 : 1);
     k(L.flowers, lvl >= 4 ? 0.7 : 1);
     k(L.near, lvl >= 5 ? 0.75 : 1);
+  }
+
+  // вид от третьего лица: камера за плечом (в оптику/бинокль/тепловизор — снова из глаз)
+  thirdPerson(dt) {
+    const on = this.tp && !this.driving && this.gun.aimT < 0.3 && this.binoc.t < 0.2 && this.slot !== 'thermal' && this.slot !== 'phone';
+    this.body.update(dt, this.player, on, this.input.aim);
+    if (!on) { this._tpK = 0; return; }
+    const cam = this.camera;
+    const dir = cam.getWorldDirection(this._tpDir ||= new THREE.Vector3());
+    const right = (this._tpR ||= new THREE.Vector3()).set(-dir.z, 0, dir.x).normalize();
+    const back = 3.2 * (this._tpK = Math.min(1, (this._tpK || 0) + dt * 4));
+    // от третьего лица камера не «падает» вместе с охотником — смотрим, как он падает
+    cam.rotation.set(this.player.pitch, this.player.yaw, 0, 'YXZ');
+    cam.position.copy(this.player.pos).add({ x: 0, y: 1.68, z: 0 }).addScaledVector(dir, -back).addScaledVector(right, 0.55).add({ x: 0, y: 0.25, z: 0 });
+    const gy = this.ground.sample(cam.position.x, cam.position.z) + 0.4;
+    if (cam.position.y < gy) cam.position.y = gy;
+    this.gun.root.visible = false;
+  }
+
+  // ---------- грязь: машины пачкаются на бездорожье и в лужах, отмываются в реке и под дождём ----------
+  updateDirt(dt) {
+    const w = this.env.wet, rain = this.env.weather.rain;
+    for (const v of this.vehicles) {
+      const sp = Math.abs(v.speed);
+      const inWater = this.ground.sample(v.pos.x, v.pos.z) < WATER_LEVEL - 0.3;
+      let d = v.dirt;
+      if (inWater) d -= dt * (sp > 1 ? 0.35 : 0.12);
+      else if (sp > 1.5) {
+        const offroad = roadDist(v.pos.x, v.pos.z) > ROAD_HALF + 1;
+        d += dt * (offroad ? 0.006 : 0.0015) * (sp / 8) * (1 + 2.5 * w + this.shared.uSeason.value.x);
+        if (this.puddles?.wetAt(v.pos.x, v.pos.z)) d += dt * 0.09 * Math.min(2, sp / 6);
+      }
+      d -= dt * 0.004 * rain;
+      v.dirt = Math.max(0, Math.min(1, d));
+      v.dirtU.value = v.dirt;
+    }
+    // охотник: дождь понемногу отмывает; брызги на экране после падения гаснут
+    this.player.dirt = Math.max(0, this.player.dirt - dt * 0.004 * rain);
+    this.mudFlash = Math.max(0, this.mudFlash - dt * 0.22);
+    const op = this.tp ? 0 : Math.min(1, this.mudFlash * 1.2);
+    if (Math.abs(op - (this._mudOp ?? -1)) > 0.01) { this._mudOp = op; $('#mud-screen').style.opacity = op.toFixed(2); }
   }
 
   // ---------- инвентарь ----------
@@ -638,7 +691,7 @@ class Game {
       this.sendT = SEND_MS;
       const msg = {
         t: 'st', p: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)], yaw: +this.player.yaw.toFixed(2), pitch: +this.player.pitch.toFixed(2),
-        sp: +this.player.speed.toFixed(1), a: this.player.health > 0 ? 1 : 0, ai: this.gun.aimT > 0.5 ? 1 : 0, g: +this.ground.sample(p.x, p.z).toFixed(1),
+        sp: +this.player.speed.toFixed(1), a: this.player.health > 0 ? 1 : 0, d: +this.player.dirt.toFixed(2), f: this.player.fallT > 0 ? 1 : 0, ai: this.gun.aimT > 0.5 ? 1 : 0, g: +this.ground.sample(p.x, p.z).toFixed(1),
       };
       if (this.driving && this.seat === 0) msg.vs = this.driving.netState();
       net.send(msg);
@@ -764,7 +817,7 @@ class Game {
       // двигатель распугивает зверей
       if (this.sim && Math.abs(v.speed) > 3 && Math.random() < dt * 2) this.sim.noise(v.pos.x, v.pos.z, 0.35);
     } else {
-      input.consume('view');
+      if (input.consume('view')) { this.tp = !this.tp; this.hud.message(this.tp ? 'Вид от третьего лица (V — обратно)' : 'Вид от первого лица'); }
       const armed = this.armed;
       if (input.consume('fire') && this.player.health > 0) { if (armed) this.shoot(); else this.select('rifle'); }
       if (input.consume('reload')) { if (!armed) this.select('rifle'); this.gun.reload(); }
@@ -772,6 +825,7 @@ class Game {
       if (!armed) this.gun.root.visible = false;
       this.player.aimFov = this.slot === 'sniper' ? 72 / (this.sniperZoom || 8) : 14;
       this.player.update(dt, input, this.gun.aimT, this.binoc.t);
+      this.thirdPerson(dt);
     }
     const cp = this.camera.position;
     if (this.net) {
@@ -799,6 +853,7 @@ class Game {
       u.uRain.value = this.env.weather.rain;
     }
     this.impacts.update(dt);
+    this.updateDirt(dt);
     this.binoc.update(dt, () => this.rangefinder());
     this.updateVision(dt);
     this.updateHouseLight(dt);
@@ -876,7 +931,7 @@ function setupMenu() {
   $('#sens').value = settings.sensitivity;
   $('#controls-help').innerHTML = isTouch
     ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок, 🔭 бинокль, 📱 телефон с картой'
-    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка (в оптике — выстрел) · Space — прыжок · F — машина/вышка/дверь · V — вид в машине · 1–7 — инвентарь (2 — снайперская с ночной оптикой, 5 — тепловизор) · B — бинокль · M — телефон (карта) · Esc — пауза';
+    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка (в оптике — выстрел) · Space — прыжок · F — машина/вышка/дверь · V — вид от 3-го лица / в машине · 1–7 — инвентарь (2 — снайперская с ночной оптикой, 5 — тепловизор) · B — бинокль · M — телефон (карта) · Esc — пауза';
 
   // «Ультра» на телефоне — только после предупреждения
   const warnUltra = (sel) => sel.addEventListener('change', () => {

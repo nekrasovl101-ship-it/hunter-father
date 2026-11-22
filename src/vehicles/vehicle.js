@@ -54,10 +54,49 @@ async function loadVehicleAsset(key) {
       o.receiveShadow = true;
       // стекло делаем полупрозрачным и бликующим, кузов — «краской»
       const m = o.material;
+      const isWheel = cfg.wheels.test(o.name) && !/spare/i.test(o.name);
       if (m && /glass/i.test(m.name)) { m.transparent = true; m.opacity = 0.55; m.roughness = 0.05; m.metalness = 0.8; }
-      else if (m && !m.userData.tuned) { m.roughness = Math.min(m.roughness ?? 1, 0.55); m.metalness = Math.max(m.metalness ?? 0, 0.15); m.userData.tuned = true; }
+      else if (m && /light/i.test(m.name)) { /* фары как есть */ }
+      else if (m) {
+        // кузов — заводская краска под лаком (отражает небо), шины — матовая резина
+        o.material = isWheel
+          ? new THREE.MeshStandardMaterial({ map: m.map, color: m.color, roughness: 0.92, metalness: 0 })
+          : new THREE.MeshPhysicalMaterial({ map: m.map, color: m.color, roughness: 0.48, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.08 });
+        o.material.userData.carPaint = !isWheel;
+        o.material.name = m.name;
+      }
     });
-    return { root, cfg, size: new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()) };
+    const carSize = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+    // грязь на машине: снизу вверх и брызгами; у каждой машины своя (uDirt в userData копии материала)
+    root.traverse((o) => {
+      if (!o.isMesh || !(o.material.userData.carPaint !== undefined)) return;
+      const m = o.material, paint = m.userData.carPaint;
+      m.onBeforeCompile = function (sh) {
+        sh.uniforms.uDirt = this.userData.dirtU || { value: 0 };
+        sh.uniforms.uCarH = { value: carSize.y };
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCarP;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCarP = (modelMatrix * vec4(position, 1.0)).xyz - (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;\nvCarP = transpose(mat3(modelMatrix)) * vCarP;');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+          varying vec3 vCarP; uniform float uDirt, uCarH;
+          float ch(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+          float cn(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+            return mix(mix(mix(ch(i), ch(i + vec3(1,0,0)), f.x), mix(ch(i + vec3(0,1,0)), ch(i + vec3(1,1,0)), f.x), f.y),
+                       mix(mix(ch(i + vec3(0,0,1)), ch(i + vec3(1,0,1)), f.x), mix(ch(i + vec3(0,1,1)), ch(i + vec3(1,1,1)), f.x), f.y), f.z); }
+          float mudK = 0.0;`)
+          .replace('#include <color_fragment>', `#include <color_fragment>
+          {
+            float h = clamp(vCarP.y / max(uCarH, 0.01), 0.0, 1.0);
+            float n = cn(vCarP * 3.0) * 0.6 + cn(vCarP * 11.0) * 0.4;
+            mudK = clamp(uDirt * 1.35 * (1.0 - smoothstep(0.18, 0.42 + uDirt * 0.5, h + (n - 0.5) * 0.3)) + uDirt * 0.8 * smoothstep(0.55, 0.75, n) * (1.0 - h * 0.8), 0.0, 1.0)${paint ? '' : ' * 1.0 + 0.25 * (1.0 - h)'};
+            vec3 mud = mix(vec3(0.09, 0.07, 0.045), vec3(0.2, 0.155, 0.1), cn(vCarP * 6.0));
+            diffuseColor.rgb = mix(diffuseColor.rgb, mud, clamp(mudK, 0.0, 1.0) * 0.95);
+          }`)
+          .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.96, clamp(mudK, 0.0, 1.0));');
+        if (paint) sh.fragmentShader = sh.fragmentShader.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\nmaterial.clearcoat *= 1.0 - clamp(mudK, 0.0, 1.0);');
+      };
+      m.customProgramCacheKey = () => 'carDirt' + paint;
+    });
+    return { root, cfg, size: carSize };
   });
   cache.set(key, p);
   return p;
@@ -73,6 +112,16 @@ export class Vehicle {
     Object.assign(this, { world, ground, cfg: asset.cfg });
     this.root = asset.root.clone(true);
     this.size = asset.size;
+    // своя грязь у каждой машины
+    this.dirt = 0;
+    this.dirtU = { value: 0 };
+    this.root.traverse((o) => {
+      if (!o.isMesh || o.material.userData.carPaint === undefined) return;
+      const m = o.material, n = m.clone();
+      n.onBeforeCompile = m.onBeforeCompile; n.customProgramCacheKey = m.customProgramCacheKey;
+      n.userData.dirtU = this.dirtU;
+      o.material = n;
+    });
     this.pos = new THREE.Vector3(x, ground.sample(x, z), z);
     this.heading = heading;
     this.speed = 0;

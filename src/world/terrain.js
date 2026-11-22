@@ -132,8 +132,12 @@ float pm = texture2D(tPuddle, (vTerrWorld.xz + 400.0) / 800.0).r;
 float pn = (tNoise(vTerrWorld.xz * 1.3) - 0.5) * 0.22 + (tNoise(vTerrWorld.xz * 5.0) - 0.5) * 0.06;
 // сама вода — отдельный меш (как река); здесь только тёмная мокрая земля вокруг и под ней
 float puddle = 0.0;
-float rim = (1.0 - sn) * smoothstep(0.3, 0.5, pm + pn);
-alb *= 1.0 - rim * 0.22; // лёгкая мокрая кромка только у самой лужи
+// вокруг лужи — раскисшая грязь (настоящая текстура грязи), тёмная и влажная
+float rim = (1.0 - sn) * smoothstep(0.14, 0.48, pm + pn + (tNoise(vTerrWorld.xz * 0.8) - 0.5) * 0.12);
+if (rim > 0.01) {
+  vec3 mudT = textureGrad(tMudA, uvM * 1.6, dMx * 1.6, dMy * 1.6).rgb;
+  alb = mix(alb, mudT * vec3(0.62, 0.55, 0.46), rim * 0.9);
+}
 #else
 float puddle = uSeason.w * (1.0 - sn) * (sw.z + sw.y * 0.5 + sw.x * 0.3) * smoothstep(0.64, 0.7, tNoise(vTerrWorld.xz * 0.11) * 0.7 + tNoise(vTerrWorld.xz * 0.43) * 0.3) * (1.0 - sw.w) * (1.0 - sw.y * 0.6);
 #endif
@@ -155,6 +159,9 @@ roughnessFactor = mix(roughnessFactor, max(texture2D(tLeafR, uvL).g, 0.8), leafK
 roughnessFactor = mix(roughnessFactor, texture2D(tSnowR, uvS).g * 0.9, sn);
 #endif
 roughnessFactor = mix(roughnessFactor, 0.04, puddle);
+#ifdef HAS_PUDDLES
+roughnessFactor = mix(roughnessFactor, 0.5, rim * 0.8);   // мокрая грязь блестит
+#endif
 `;
 // искры на снегу: редкие кристаллы, вспыхивающие при определённом угле к солнцу и камере
 const SPARKLE = /* glsl */`

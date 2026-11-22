@@ -161,7 +161,7 @@ export class Room extends DurableObject {
     const snap = {
       t: 'snap', ts: now,
       a: this.sim.animals.map((a) => [a.id, SPECIES_IDS.indexOf(a.type), r1(a.x), r1(a.z), r2(a.heading), ANIMS.indexOf(a.anim), r1(a.speed)]),
-      p: [...this.players.values()].filter((p) => p.ready).map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), r1(p.speed), p.veh, p.alive, p.aim, p.seat]),
+      p: [...this.players.values()].filter((p) => p.ready).map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), r1(p.speed), p.veh, p.alive, p.aim, p.seat, r2(p.dirt || 0), p.fall || 0]),
       v: this.vehicles.map((v) => [v.id, r2(v.x), r2(v.y), r2(v.z), r2(v.heading), r2(v.pitch), r2(v.roll), r1(v.speed), r2(v.steer), v.driver]),
     };
     this._broadcast(snap);
@@ -204,6 +204,7 @@ export class Room extends DurableObject {
         if ([x, y, z].every(Number.isFinite)) { p.x = x; p.y = y; p.z = z; p.ready = true; }
         p.yaw = +m.yaw || 0; p.pitch = +m.pitch || 0; p.speed = Math.min(40, Math.abs(+m.sp || 0));
         p.alive = m.a ? 1 : 0; p.aim = m.ai ? 1 : 0; p.ground = +m.g || p.y;
+        p.dirt = Math.max(0, Math.min(1, +m.d || 0)); p.fall = m.f ? 1 : 0;
         // состояние машины присылает её водитель
         if (p.veh && Array.isArray(m.vs)) {
           const v = this.vehicles.find((q) => q.id === p.veh);

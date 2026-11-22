@@ -220,3 +220,18 @@ canvas#game.locked { cursor: none; }
 .versions .cur { padding: 4px 10px; border-radius: 8px; background: rgba(217, 164, 65, 0.22); color: var(--accent); font-weight: 600; }
 .versions a { padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--text); text-decoration: none; }
 .versions a:hover { border-color: var(--accent); }
+
+/* брызги грязи на «камере» после падения */
+#mud-screen { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.25s;
+  background:
+    radial-gradient(ellipse 16% 12% at 6% 92%, rgba(52, 36, 20, 0.97), rgba(52, 36, 20, 0.6) 45%, rgba(52, 36, 20, 0) 72%),
+    radial-gradient(ellipse 10% 14% at 20% 99%, rgba(66, 47, 26, 0.95), rgba(66, 47, 26, 0) 70%),
+    radial-gradient(ellipse 18% 10% at 92% 95%, rgba(48, 34, 18, 0.97), rgba(48, 34, 18, 0.55) 45%, rgba(48, 34, 18, 0) 72%),
+    radial-gradient(ellipse 8% 7% at 80% 80%, rgba(78, 56, 31, 0.9), rgba(78, 56, 31, 0) 70%),
+    radial-gradient(ellipse 7% 11% at 3% 58%, rgba(58, 42, 24, 0.92), rgba(58, 42, 24, 0) 70%),
+    radial-gradient(ellipse 10% 8% at 97% 52%, rgba(64, 46, 26, 0.9), rgba(64, 46, 26, 0) 70%),
+    radial-gradient(ellipse 5% 5% at 32% 82%, rgba(70, 50, 29, 0.88), rgba(70, 50, 29, 0) 70%),
+    radial-gradient(ellipse 4% 3.5% at 64% 88%, rgba(70, 50, 29, 0.88), rgba(70, 50, 29, 0) 70%),
+    radial-gradient(ellipse 3% 3% at 45% 70%, rgba(72, 52, 30, 0.75), rgba(72, 52, 30, 0) 70%),
+    radial-gradient(ellipse 6% 4% at 12% 20%, rgba(60, 44, 25, 0.7), rgba(60, 44, 25, 0) 70%),
+    radial-gradient(ellipse 5% 6% at 88% 18%, rgba(60, 44, 25, 0.7), rgba(60, 44, 25, 0) 70%); }

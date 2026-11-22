@@ -69,12 +69,12 @@ export class RemoteHunters {
   // seatFn(vehId, seat, out) → ставит out в точку глаз этого места, возвращает курс машины
   sync(states, myId, dt, camPos, seatFn) {
     for (const s of states) {
-      const [id, x, y, z, yaw, , speed, veh, alive, aim, seat] = s;
+      const [id, x, y, z, yaw, , speed, veh, alive, aim, seat, dirt, fall] = s;
       if (id === myId) continue;
       const v = this.list.get(id);
       if (!v) continue;
       const first = v.target === null;
-      v.target = { x, y, z, yaw, speed, veh, alive, aim, seat: seat || 0 };
+      v.target = { x, y, z, yaw, speed, veh, alive, aim, seat: seat || 0, dirt: dirt || 0, fall: !!fall };
       if (first) { v.x = x; v.y = y; v.z = z; v.yaw = yaw; }
     }
     for (const v of this.list.values()) {
@@ -101,10 +101,12 @@ export class RemoteHunters {
       }
       if (v.rifle) v.rifle.visible = true;
       v.label.visible = true;
+      v.model.dirtU.value += ((t.dirt || 0) - v.model.dirtU.value) * Math.min(1, dt * 3);
       root.position.set(v.x, v.y, v.z);
       // yaw камеры смотрит в -Z, модель — в +Z
       root.rotation.y = v.yaw + Math.PI;
       let anim = t.speed > 4.6 ? 'run' : t.speed > 0.4 ? 'walk' : t.aim ? 'aim' : 'idle';
+      if (t.fall) anim = 'fall';
       if (!t.alive) anim = 'death';
       if (v.flashT > 0) { v.flashT -= dt; if (!t.speed) anim = 'shoot'; }
       v.model.play(anim, 0.2);
@@ -122,5 +124,48 @@ export class RemoteHunters {
     const v = this.list.get(id);
     if (v) v.flashT = 0.6;
     return v;
+  }
+}
+
+// Своё тело — для вида от третьего лица (V): та же модель охотника, ружьё в руке, анимации по движению,
+// грязь на одежде
+export class SelfBody {
+  constructor(scene, preset) {
+    this.scene = scene;
+    this.ready = false;
+    loadModel('hunter').then((asset) => {
+      this.model = new ModelInstance(asset, preset.shadows);
+      this.model.play('idle');
+      const cfg = MODELS.hunter.rifle;
+      const bone = this.model.root.getObjectByName(cfg.bone);
+      if (bone) {
+        this.model.root.updateMatrixWorld(true);
+        const ws = bone.getWorldScale(new THREE.Vector3());
+        const rifle = new THREE.Mesh(buildRifle(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2 }));
+        rifle.scale.set(1 / ws.x, 1 / ws.y, 1 / ws.z);
+        rifle.position.set(cfg.pos[0] / ws.x, cfg.pos[1] / ws.y, cfg.pos[2] / ws.z);
+        rifle.rotation.set(...cfg.rot);
+        rifle.castShadow = preset.shadows;
+        bone.add(rifle);
+      }
+      this.model.root.visible = false;
+      scene.add(this.model.root);
+      this.ready = true;
+    });
+  }
+
+  // player — позиция/курс/скорость/падение; visible — включён ли вид от третьего лица
+  update(dt, player, visible, aiming) {
+    if (!this.ready) return;
+    const root = this.model.root;
+    root.visible = visible;
+    this.model.dirtU.value = player.dirt;
+    if (!visible) return;
+    root.position.copy(player.pos);
+    root.rotation.y = player.yaw + Math.PI;
+    const anim = player.fallT > 0 ? 'fall' : player.speed > 4.6 ? 'run' : player.speed > 0.4 ? 'walk' : aiming ? 'aim' : 'idle';
+    this.model.play(anim, 0.15);
+    if (this.model.current && anim === 'walk') this.model.current.timeScale = Math.max(0.6, player.speed / 1.6);
+    this.model.update(dt);
   }
 }
