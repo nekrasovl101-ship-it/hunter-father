@@ -77,10 +77,20 @@ colG = mix(colG, meadow * vec3(1.05, 1.0, 0.8), dry * 0.55);
 vec3 colF = texture2D(tForestA, uvF).rgb;
 vec3 colM = texture2D(tMudA, uvM).rgb;
 vec3 colR = texture2D(tRockA, uvR).rgb * vec3(0.66, 0.65, 0.63);
+// вдали мелкий рисунок скал сливается в светлую «крупу» — даём крупную текстуру и темнее, как у дальних гор
+// склоны по краю карты — как настоящие горы: крупная тёмная порода, без мелкого повтора
+float edgeK = smoothstep(320.0, 380.0, max(abs(vTerrWorld.x), abs(vTerrWorld.z)));
+colR = mix(colR, texture2D(tRockA, uvR * 0.11).rgb * vec3(0.5, 0.48, 0.45), max(smoothstep(90.0, 260.0, camDist), edgeK * 0.85));
 vec4 lum = vec4(dot(colG, vec3(0.33)), dot(colF, vec3(0.33)), dot(colM, vec3(0.33)), dot(colR, vec3(0.33)));
 vec4 sw = heightBlend(splatBase(), lum * 1.6);
 vec3 alb = colG * sw.x + colF * sw.y + colM * sw.z + colR * sw.w;
 alb *= 0.82 + 0.36 * macro;
+// пласты породы и пятна на крутых склонах (особенно по краю карты)
+{
+  float strata = smoothstep(0.3, 0.7, fract(vTerrWorld.y * 0.07 + (vTerrWorld.x + vTerrWorld.z) * 0.006 + tNoise(vTerrWorld.xz * 0.035) * 0.7));
+  float blot = tNoise(vTerrWorld.xz * 0.012) * 0.6 + tNoise(vTerrWorld.xz * 0.05) * 0.4;
+  alb *= 1.0 - sw.w * (0.12 + edgeK * 0.2) * (1.0 - strata) - sw.w * edgeK * 0.18 * smoothstep(0.45, 0.75, blot);
+}
 // времена года: осенью трава жухнет и лежат опавшие листья, весной сочнее, зимой — снег
 float gl = dot(colG, vec3(0.33));
 vec3 autumnG = mix(vec3(gl) * vec3(1.2, 0.92, 0.45), colF, 0.4);
@@ -268,8 +278,8 @@ function ridged(x, z) {
 }
 
 function farMountains(preset) {
-  const A = preset.terrainSeg >= 300 ? 360 : 220;  // шагов по углу
-  const R = preset.terrainSeg >= 300 ? 56 : 36;    // колец
+  const A = preset.terrainSeg >= 400 ? 512 : preset.terrainSeg >= 300 ? 360 : 220;  // шагов по углу
+  const R = preset.terrainSeg >= 400 ? 80 : preset.terrainSeg >= 300 ? 56 : 36;    // колец
   const r0 = HALF * 0.86, r1 = 1600;
   const pos = new Float32Array((A + 1) * (R + 1) * 3);
   let k = 0;

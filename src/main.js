@@ -115,7 +115,7 @@ class Game {
     scene.add(this.grass);
     this.sky = new SkySystem(scene, preset);
     this.sky.winter = this.season === 'winter';
-    terrain.far.material = this.sky.farMaterial(preset.viewDist);
+    terrain.far.material = this.sky.farMaterial(preset.viewDist, sets.rock);
     onProgress(0.5, 'Деревья…');
     this.trees = await createTrees(this.world, preset, sets.bark, sets.barkBroad, this.shared, renderer);
     scene.add(this.trees);

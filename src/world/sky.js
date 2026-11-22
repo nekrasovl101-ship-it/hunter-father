@@ -25,6 +25,7 @@ export class SkySystem {
     this.night = 0;                        // 0 — день, 1 — глубокая ночь
     this.light = 1;                        // общий уровень освещённости (для импостеров)
     this.weather = { cloud: 0, rain: 0, snow: 0, fog: 0 };
+    this.thickU = { value: 0 };   // густота тумана/осадков для дальних гор
 
     this.uniforms = {
       uZenith: { value: new THREE.Color() },
@@ -58,12 +59,20 @@ export class SkySystem {
           return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
         }
         float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * vn(p); p *= 2.03; a *= 0.5; } return s; }
+        float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * vn(p); p *= 2.03; a *= 0.5; } return s / 0.875; }
         void main() {
           vec3 d = normalize(vDir);
           float h = max(d.y, 0.0);
-          vec3 col = mix(uHorizon, uZenith, smoothstep(0.03, 0.7, h));
-          col = mix(col, uHorizon * 0.8, smoothstep(0.0, -0.2, d.y));
           float sunUp = smoothstep(-0.12, 0.02, uSunDir.y);
+          // Небо как в атмосфере: насыщенная синева почти до горизонта и тонкая светлая дымка у самого
+          // горизонта (экспоненциально), ярче в сторону солнца (рассеяние Ми), чуть темнее напротив
+          float haze = exp(-h * 7.0) * 0.85 + exp(-h * 2.2) * 0.15;
+          vec3 col = mix(uZenith, uHorizon, haze);
+          float sd = dot(d, uSunDir);
+          float toSun = max(dot(normalize(d.xz + 1e-5), normalize(uSunDir.xz + 1e-5)), 0.0);
+          col *= 1.0 + (0.22 * toSun * toSun * exp(-h * 3.0) - 0.08 * (1.0 - toSun)) * sunUp * (1.0 - uCover);
+          col = mix(col, uHorizon * mix(1.0, 1.15, toSun), exp(-h * 20.0) * 0.5 * sunUp);
+          col = mix(col, uHorizon * 0.75, smoothstep(0.0, -0.2, d.y));
           // закат: оранжевое зарево у солнца, розово-сиреневая полоса выше, к зениту — глубокий индиго
           if (uSunset > 0.01) {
             vec2 dh = normalize(d.xz + 1e-5), sh = normalize(uSunDir.xz + 1e-5);
@@ -75,7 +84,7 @@ export class SkySystem {
             col += gold * pow(toward, 5.0) * smoothstep(0.45, 0.0, h) * uSunset * 0.5 * (1.0 - uCover * 0.7);
             col += vec3(1.0, 0.35, 0.12) * pow(toward, 2.0) * smoothstep(0.12, 0.0, abs(d.y)) * uSunset * 0.18;
           }
-          float s = max(dot(d, uSunDir), 0.0);
+          float s = max(sd, 0.0);
           col += uSunColor * (pow(s, 900.0) * 6.0 * sunUp * (1.0 - uEnvPass) + pow(s, 12.0) * 0.35 + pow(s, 3.0) * 0.12) * sunUp * (1.0 - uCover * 0.85);
           // звёзды и луна
           if (uNight > 0.01 && d.y > 0.0) {
@@ -87,25 +96,44 @@ export class SkySystem {
             float m = max(dot(d, uMoonDir), 0.0);
             col += vec3(0.85, 0.88, 0.95) * (smoothstep(0.9995, 0.9997, m) * 1.6 + pow(m, 60.0) * 0.08) * uNight * (1.0 - uCover * 0.7);
           }
-          // облака: проекция на «потолок», дрейф по ветру; плотность зависит от погоды
-          if (d.y > 0.02) {
-            vec2 cp = d.xz / (d.y + 0.08) * 1.4 + vec2(uTime * 0.012, uTime * 0.004) * (1.0 + uCover * 2.0);
-            float n = fbm(cp);
-            float lo = mix(0.48, 0.12, uCover), hi = mix(0.78, 0.5, uCover);
-            float cov = smoothstep(lo, hi, n) * smoothstep(0.02, 0.25, d.y);
-            float shade = fbm(cp + uSunDir.xz * 0.15);
-            vec3 cloudCol = mix(uHorizon * 1.05, vec3(0.95) * max(0.08, 1.0 - uNight) + uSunColor * 0.25 * sunUp, 0.55 + (n - shade) * 2.0);
-            cloudCol *= mix(1.0, 0.45, uCover * uCover);   // тяжёлые дождевые тучи темнее
-            cloudCol += uSunColor * pow(s, 6.0) * 0.6 * sunUp;
+          // облака: проекция на «потолок», дрейф по ветру, искажение формы (клубы), освещение от солнца:
+          // светлые верхушки и края, тёмный низ у плотных облаков, серебристая кайма у солнца
+          if (d.y > 0.0) {
+            vec2 wind = vec2(uTime * 0.012, uTime * 0.004) * (1.0 + uCover * 2.0);
+            vec2 cp = d.xz / (d.y + 0.08) * 1.4 + wind;
+            vec2 warp = vec2(fbm3(cp * 0.6), fbm3(cp * 0.6 + 5.2)) - 0.5;
+            vec2 q = cp + warp * 0.55;
+            float n = fbm(q);
+            float lo = mix(0.5, 0.12, uCover), hi = mix(0.74, 0.5, uCover);
+            float dens = smoothstep(lo, hi, n);
+            float fadeH = smoothstep(0.0, 0.22, d.y);
+            float cov = dens * fadeH;
+            // плотность чуть ближе к солнцу: если там гуще — эта точка в тени облака
+            float nS = fbm3(q + uSunDir.xz * 0.22);
+            float light = clamp(0.62 + (n - nS) * 3.2, 0.0, 1.0);
+            vec3 skyAmb = mix(uHorizon, uZenith, 0.35);
+            vec3 sunLit = vec3(1.0) * max(0.06, 1.0 - uNight) + uSunColor * 0.35 * sunUp;
+            vec3 cloudCol = mix(skyAmb * 0.78, sunLit, light);
+            cloudCol *= mix(1.0, 0.55, smoothstep(0.55, 1.0, dens) * (0.35 + uCover * 0.65)); // тёмное «брюхо»
+            cloudCol *= mix(1.0, 0.45, uCover * uCover);   // тяжёлые дождевые тучи
+            // серебристые края на просвет у солнца
+            float sdp = max(sd, 0.0);
+            cloudCol += uSunColor * pow(sdp, 8.0) * (1.0 - dens) * 1.4 * sunUp * (1.0 - uCover * 0.6);
+            cloudCol += uSunColor * pow(sdp, 4.0) * 0.25 * sunUp;
+            // у горизонта облака тонут в дымке
+            cloudCol = mix(cloudCol, uHorizon, exp(-d.y * 9.0) * 0.55);
             // на закате облака подсвечены снизу: у солнца — золото и персик, дальше — розовые и лиловые
             if (uSunset > 0.01) {
-              float tw = max(dot(normalize(d.xz + 1e-5), normalize(uSunDir.xz + 1e-5)), 0.0);
-              vec3 lit = mix(vec3(0.85, 0.36, 0.55), vec3(1.0, 0.62, 0.3), pow(tw, 3.0));
+              vec3 lit = mix(vec3(0.85, 0.36, 0.55), vec3(1.0, 0.62, 0.3), pow(toSun, 3.0));
               vec3 dark = vec3(0.32, 0.22, 0.42);
-              vec3 sc = mix(dark, lit * 1.25, clamp(0.35 + (n - shade) * 3.0 + tw * 0.4, 0.0, 1.0));
+              vec3 sc = mix(dark, lit * 1.25, clamp(0.35 + (n - nS) * 3.0 + toSun * 0.4, 0.0, 1.0));
               cloudCol = mix(cloudCol, sc, uSunset * 0.55 * (1.0 - uCover * 0.5));
             }
-            col = mix(col, cloudCol, cov * 0.95);
+            col = mix(col, cloudCol, cov * 0.96);
+            // высокие перистые облака — тонкие вытянутые волокна (в ясную погоду)
+            vec2 cc = d.xz / (d.y + 0.03) * 0.5 + wind * 0.6;
+            float ci = smoothstep(0.52, 0.82, fbm3(vec2(cc.x * 0.45 + cc.y * 0.2, cc.y * 2.4)));
+            col = mix(col, sunLit * 0.95 + uSunColor * 0.1, ci * 0.32 * fadeH * (1.0 - uCover) * (1.0 - cov) * max(0.15, 1.0 - uNight));
           }
           gl_FragColor = vec4(col, 1.0);
           #include <tonemapping_fragment>
@@ -199,47 +227,80 @@ export class SkySystem {
     this.scene.fog.color.copy(hor);
     const vd = this.preset.viewDist;
     const thick = Math.max(fog, storm * 0.6);
-    this.scene.fog.far = vd * (1 - thick * 0.7) * (1 - night * 0.25);
-    this.scene.fog.near = Math.max(5, vd * 0.24 * (1 - thick * 0.9) * (1 - Math.max(0, 1 - Math.abs(e) * 8) * 0.3));
+    this.thickU.value = Math.max(thick, night * 0.15);
+    // в ясную погоду воздух прозрачнее: дымка начинается дальше и мягче (края карты не «белеют»)
+    const clear = 1 - Math.min(1, thick * 1.5);
+    this.scene.fog.far = vd * (1 + clear * 0.35) * (1 - thick * 0.7) * (1 - night * 0.25);
+    this.scene.fog.near = Math.max(5, vd * (0.24 + clear * 0.2) * (1 - thick * 0.9) * (1 - Math.max(0, 1 - Math.abs(e) * 8) * 0.3));
   }
 
-  // Материал для дальних гор: цвет неба в этом направлении (воздушная перспектива)
-  farMaterial(viewDist) {
+  // Материал для дальних гор: фото-текстура скал (трипланарно — без растяжения на кручах),
+  // тёмный хвойный лес у подножия, промоины-расселины вдоль склона, снег там, где он держится,
+  // освещение от солнца с детальным рельефом и воздушная перспектива (дальше — голубее и светлее)
+  farMaterial(viewDist, rock) {
     return new THREE.ShaderMaterial({
-      uniforms: { ...this.uniforms, uWinter: { value: this.winter ? 1 : 0 }, uLightDir: { value: this.sunDir }, uFogColor: { value: this.scene.fog.color }, uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 } },
+      uniforms: { ...this.uniforms, uWinter: { value: this.winter ? 1 : 0 }, uLightDir: { value: this.sunDir }, uFogColor: { value: this.scene.fog.color },
+        uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 }, tRock: { value: rock?.albedo || null }, uHasRock: { value: rock ? 1 : 0 }, uThick: this.thickU },
       vertexShader: /* glsl */`
         varying vec3 vW; varying vec3 vN;
         void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vN = normal; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
         uniform vec3 uZenith, uHorizon, uSunColor, uFogColor, uLightDir;
-        uniform float uNear, uFar, uNight, uWinter;
+        uniform float uNear, uFar, uNight, uWinter, uHasRock, uThick;
+        uniform sampler2D tRock;
         varying vec3 vW; varying vec3 vN;
         float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
           return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+        float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * vn(p); p *= 2.07; a *= 0.5; } return s / 0.875; }
+        vec3 tri(vec3 p, vec3 n, float sc) {
+          vec3 w = pow(abs(n), vec3(4.0)); w /= dot(w, vec3(1.0));
+          return texture2D(tRock, p.zy * sc).rgb * w.x + texture2D(tRock, p.xz * sc).rgb * w.y + texture2D(tRock, p.xy * sc).rgb * w.z;
+        }
         void main() {
-          vec3 n = normalize(vN);
+          vec3 n0 = normalize(vN);
           vec3 d = normalize(vW - cameraPosition);
           float dist = length(vW - cameraPosition);
-          float slope = 1.0 - n.y;
-          float nz = vn(vW.xz * 0.02) * 0.6 + vn(vW.xz * 0.11) * 0.4;
-          // лес внизу, скалы на крутых склонах и выше, снег на вершинах
-          vec3 forest = mix(vec3(0.07, 0.11, 0.05), vec3(0.13, 0.17, 0.08), nz);
-          vec3 rock = mix(vec3(0.30, 0.29, 0.27), vec3(0.42, 0.40, 0.37), nz);
-          vec3 snow = vec3(0.86, 0.89, 0.94);
-          float rockK = clamp(smoothstep(0.35, 0.6, slope + nz * 0.2) + smoothstep(120.0, 190.0, vW.y + nz * 30.0), 0.0, 1.0);
-          vec3 col = mix(forest, rock, rockK);
-          float snowLine = mix(195.0, 20.0, uWinter);
-          float snowK = smoothstep(snowLine, snowLine + 40.0, vW.y + nz * 40.0) * (1.0 - smoothstep(0.55, 0.8, slope));
+          // детальный рельеф: возмущаем нормаль градиентом шума (крупные складки + мелкие уступы)
+          float e = 6.0;
+          float b0 = fbm3(vW.xz * 0.012) + 0.35 * vn(vW.xz * 0.06);
+          float bx = fbm3((vW.xz + vec2(e, 0.0)) * 0.012) + 0.35 * vn((vW.xz + vec2(e, 0.0)) * 0.06);
+          float bz = fbm3((vW.xz + vec2(0.0, e)) * 0.012) + 0.35 * vn((vW.xz + vec2(0.0, e)) * 0.06);
+          vec3 n = normalize(n0 + vec3(b0 - bx, 0.0, b0 - bz) * 4.5);
+          float slope = 1.0 - n0.y;
+          // промоины: тёмные полосы, бегущие вниз по склону
+          vec2 sdir = normalize(n0.xz + 1e-4), perp = vec2(-sdir.y, sdir.x);
+          float gully = smoothstep(0.58, 0.86, vn(vec2(dot(vW.xz, perp) * 0.045, dot(vW.xz, sdir) * 0.004 + vW.y * 0.003))) * smoothstep(0.25, 0.5, slope);
+          // скалы: фото-текстура + крупная вариация цвета (охра/серый)
+          vec3 rockTex = uHasRock > 0.5 ? tri(vW, n0, 1.0 / 38.0) * 0.6 + tri(vW, n0, 1.0 / 140.0) * 0.4 : vec3(0.45);
+          float macro = fbm3(vW.xz * 0.0025);
+          // пласты породы (наклонные полосы) и контраст текстуры
+          float strata = smoothstep(0.35, 0.65, fract(vW.y * 0.045 + (vW.x + vW.z) * 0.004 + vn(vW.xz * 0.02) * 0.6));
+          rockTex = mix(vec3(dot(rockTex, vec3(0.33))), rockTex, 1.4);
+          vec3 rock = rockTex * mix(vec3(0.55, 0.53, 0.52), vec3(0.8, 0.7, 0.58), macro) * (0.82 + 0.25 * strata) * (1.0 - gully * 0.6);
+          // хвойный лес: тёмная зелень с «кронами» (крапинки), заходит языками по ложбинам
+          float trees = vn(vW.xz * 0.35) * 0.6 + vn(vW.xz * 1.3) * 0.4;
+          vec3 forest = mix(vec3(0.028, 0.045, 0.025), vec3(0.06, 0.085, 0.045), trees) * (0.85 + 0.3 * macro);
+          float treeLine = 105.0 + macro * 55.0 + gully * 20.0;
+          float forestK = (1.0 - smoothstep(treeLine - 25.0, treeLine, vW.y)) * (1.0 - smoothstep(0.42, 0.62, slope + (trees - 0.5) * 0.15));
+          vec3 col = mix(rock, forest, forestK);
+          // альпийские луга между лесом и скалами
+          col = mix(col, vec3(0.16, 0.17, 0.09) * (0.8 + 0.4 * trees), (1.0 - forestK) * (1.0 - smoothstep(0.3, 0.5, slope)) * (1.0 - smoothstep(treeLine, treeLine + 45.0, vW.y)) * 0.7);
+          // снег: выше линии, держится на пологом, лежит в промоинах, сдувается с гребней
+          float snowLine = mix(150.0, 25.0, uWinter) + macro * 40.0 - gully * 30.0;
+          float snowK = smoothstep(snowLine, snowLine + 30.0, vW.y + (fbm3(vW.xz * 0.03) - 0.5) * 30.0) * (1.0 - smoothstep(0.62, 0.9, slope - gully * 0.25));
+          vec3 snow = vec3(0.9, 0.93, 0.97);
           col = mix(col, snow, snowK);
-          // освещение: солнце + небо
+          // освещение: солнце по детальной нормали, небо — снизу/сверху, тень на снегу голубоватая
           float ndl = max(dot(n, uLightDir), 0.0);
-          vec3 lit = col * (uSunColor * ndl * 1.1 * (1.0 - uNight) + mix(uHorizon, uZenith, 0.5) * 0.55);
+          vec3 amb = mix(uHorizon * 0.5, uZenith, n.y * 0.5 + 0.5) * 0.42;
+          vec3 lit = col * (uSunColor * ndl * 1.35 * (1.0 - uNight) + amb * mix(1.0, 1.35, snowK));
           // воздушная перспектива: чем дальше — тем больше цвета неба
           vec3 sky = mix(uHorizon, uZenith, smoothstep(0.03, 0.7, max(d.y, 0.0)));
-          float air = 1.0 - exp(-dist * 0.00085);
-          vec3 aerial = mix(lit, sky, clamp(0.18 + air * 0.72, 0.0, 0.92));
-          gl_FragColor = vec4(mix(uFogColor, aerial, smoothstep(uNear, uFar, dist)), 1.0);
+          // ясно — горы чёткие, вдали голубеют; туман/дождь — тонут в дымке
+          float air = 1.0 - exp(-dist * 0.00062);
+          vec3 aerial = mix(lit, sky * 0.95, clamp(0.05 + air * 0.62, 0.0, 0.82));
+          gl_FragColor = vec4(mix(aerial, uFogColor, clamp(uThick * 1.4, 0.0, 1.0)), 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
