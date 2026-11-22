@@ -50,7 +50,13 @@ export class Net {
         if (!welcomed) reject(new Error(reason));
         else this.handlers.close?.(reason);
       };
-      ws.onerror = () => { if (!welcomed) reject(new Error('Сервер недоступен. Запущен ли он (npm run dev в папке server)?')); };
+      ws.onerror = () => {
+        if (welcomed) return;
+        const local = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) && !import.meta.env.VITE_SERVER_URL;
+        reject(new Error(local
+          ? 'Это локальная тестовая версия — она ищет игровой сервер на этом компьютере, а он не запущен. Играть онлайн с друзьями: nekrasovl101-ship-it.github.io/hunter-father'
+          : 'Нет связи с игровым сервером. Проверьте интернет и попробуйте ещё раз.'));
+      };
     });
   }
 
