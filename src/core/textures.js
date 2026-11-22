@@ -56,8 +56,17 @@ function loadOne(file, srgb, anisotropy, hd = false) {
   });
 }
 
-export function loadImage(url) {
-  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+// картинка с повтором: сеть иногда обрывает загрузку — пробуем ещё 2 раза, потом понятная ошибка
+export function loadImage(url, tries = 3) {
+  return new Promise((res, rej) => {
+    const attempt = (n) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => (n > 1 ? setTimeout(() => attempt(n - 1), 600) : rej(new Error(`не удалось загрузить ${url}`)));
+      i.src = n < tries ? `${url}${url.includes('?') ? '&' : '?'}r=${n}` : url;
+    };
+    attempt(tries);
+  });
 }
 
 // Подмена текстур набора на 2K «на лету»: игра стартует с обычными текстурами,

@@ -52,10 +52,18 @@ function needleBranchTexture() {
 }
 
 async function leafClusterTexture() {
-  const [colImg, opImg] = await Promise.all([
-    loadImage('textures/foliage/leafset009_color.png'),
-    loadImage('textures/foliage/leafset009_opacity.png'),
-  ]);
+  let colImg, opImg;
+  try {
+    [colImg, opImg] = await Promise.all([
+      loadImage('textures/foliage/leafset009_color.png'),
+      loadImage('textures/foliage/leafset009_opacity.png'),
+    ]);
+  } catch (e) {
+    // запасной вариант: простые нарисованные листья — игра всё равно запустится
+    console.warn(e);
+    const mk = (fill) => { const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 256, 256); x.fillStyle = fill; for (let k = 0; k < 6; k++) { x.beginPath(); x.ellipse(42 + (k % 3) * 85, 64 + Math.floor(k / 3) * 128, 30, 52, 0.3, 0, Math.PI * 2); x.fill(); } return c; };
+    colImg = mk('#3f6a2a'); opImg = mk('#fff');
+  }
   // лист с альфой: цвет + маска прозрачности
   const S = colImg.width;
   const sheet = document.createElement('canvas'); sheet.width = S; sheet.height = colImg.height;

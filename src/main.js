@@ -929,7 +929,7 @@ function setupMenu() {
       console.error(e);
       $('#load-label').innerHTML = e.message === 'WEBGL' || /WebGL/i.test(e.message)
         ? 'Браузер не дал доступ к 3D-графике (WebGL).<br>Закройте другие вкладки с 3D-играми и обновите страницу.<br>Не помогло — перезапустите браузер и проверьте, что включено<br>«Использовать аппаратное ускорение» в настройках.'
-        : 'Ошибка: ' + e.message;
+        : 'Ошибка: ' + (e?.message || String(e)) + '<br>Обновите страницу.';
       return;
     }
     $('#loading').classList.add('hidden');
