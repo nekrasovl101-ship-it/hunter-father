@@ -214,3 +214,9 @@ body.sniper-aim #touch .zoom { display: block; }
   border-radius: 10px; font-size: 15px; font-weight: 600; border: 1px solid rgba(217, 164, 65, 0.6); }
 #lock-hint.hidden { display: none; }
 canvas#game.locked { cursor: none; }
+
+/* переключатель версий в меню */
+.versions { display: flex; justify-content: center; gap: 8px; margin: -4px 0 12px; font-size: 13px; }
+.versions .cur { padding: 4px 10px; border-radius: 8px; background: rgba(217, 164, 65, 0.22); color: var(--accent); font-weight: 600; }
+.versions a { padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.versions a:hover { border-color: var(--accent); }
