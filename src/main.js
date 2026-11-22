@@ -67,7 +67,8 @@ class Game {
     const canvas = $('#game');
     // если видеокарта занята (много вкладок с 3D) — пробуем ещё раз с щадящими настройками
     let renderer;
-    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.msaa ?? preset.antialias, powerPreference: 'high-performance' }); }
+    try { // с постобработкой сглаживание делается в её буфере — у самого холста оно лишнее
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: preset.post ? false : (preset.msaa ?? preset.antialias), powerPreference: 'high-performance' }); }
     catch {
       try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false }); }
       catch { throw new Error('WEBGL'); }

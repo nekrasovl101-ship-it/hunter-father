@@ -66,27 +66,35 @@ vec2 wuv = vMapUv;
 float camDist = length(vTerrWorld - cameraPosition);
 // две частоты для травы и леса — убирают видимый повтор текстуры
 vec2 uvG = wuv * 0.9, uvF = wuv * 0.75, uvM = wuv * 0.9, uvR = wuv * 0.45;
-vec3 colG = texture2D(map, uvG).rgb;
-vec3 colG2 = texture2D(map, uvG * 0.173 + 0.31).rgb;
-vec3 meadow = texture2D(tMeadowA, uvG * 0.61).rgb;
+// Оптимизация: текстуру слоя читаем, только если этот слой в этом месте вообще есть
+// (веса из вершин). На чистой поляне не читаются лес/грязь/скалы — картинка та же, пикселю дешевле.
+vec4 sb = splatBase();
+// производные UV считаем вне условий — мип-уровни текстур корректны и на стыках слоёв
+vec2 dGx = dFdx(uvG), dGy = dFdy(uvG), dFx = dFdx(uvF), dFy = dFdy(uvF), dMx = dFdx(uvM), dMy = dFdy(uvM), dRx = dFdx(uvR), dRy = dFdy(uvR);
+vec3 colG = vec3(0.25, 0.3, 0.15);
 float macro = vSplat.w;
-colG = mix(colG, colG2, 0.35 + 0.3 * smoothstep(20.0, 120.0, camDist));
-// сухие пятна поляны
 float dry = smoothstep(0.45, 0.8, macro);
-colG = mix(colG, meadow * vec3(1.05, 1.0, 0.8), dry * 0.55);
-vec3 colF = texture2D(tForestA, uvF).rgb;
-vec3 colM = texture2D(tMudA, uvM).rgb;
-vec3 colR = texture2D(tRockA, uvR).rgb * vec3(0.66, 0.65, 0.63);
+if (sb.x > 0.003) {
+  colG = textureGrad(map, uvG, dGx, dGy).rgb;
+  vec3 colG2 = textureGrad(map, uvG * 0.173 + 0.31, dGx * 0.173, dGy * 0.173).rgb;
+  colG = mix(colG, colG2, 0.35 + 0.3 * smoothstep(20.0, 120.0, camDist));
+  // сухие пятна поляны
+  if (dry > 0.001) colG = mix(colG, textureGrad(tMeadowA, uvG * 0.61, dGx * 0.61, dGy * 0.61).rgb * vec3(1.05, 1.0, 0.8), dry * 0.55);
+}
+vec3 colF = sb.y > 0.003 ? textureGrad(tForestA, uvF, dFx, dFy).rgb : vec3(0.3);
+vec3 colM = sb.z > 0.003 ? textureGrad(tMudA, uvM, dMx, dMy).rgb : vec3(0.3);
+vec3 colR = sb.w > 0.003 ? textureGrad(tRockA, uvR, dRx, dRy).rgb * vec3(0.66, 0.65, 0.63) : vec3(0.3);
 // вдали мелкий рисунок скал сливается в светлую «крупу» — даём крупную текстуру и темнее, как у дальних гор
 // склоны по краю карты — как настоящие горы: крупная тёмная порода, без мелкого повтора
 float edgeK = smoothstep(320.0, 380.0, max(abs(vTerrWorld.x), abs(vTerrWorld.z)));
-colR = mix(colR, texture2D(tRockA, uvR * 0.11).rgb * vec3(0.5, 0.48, 0.45), max(smoothstep(90.0, 260.0, camDist), edgeK * 0.85));
+float farR = max(smoothstep(90.0, 260.0, camDist), edgeK * 0.85);
+if (sb.w > 0.003 && farR > 0.001) colR = mix(colR, textureGrad(tRockA, uvR * 0.11, dRx * 0.11, dRy * 0.11).rgb * vec3(0.5, 0.48, 0.45), farR);
 vec4 lum = vec4(dot(colG, vec3(0.33)), dot(colF, vec3(0.33)), dot(colM, vec3(0.33)), dot(colR, vec3(0.33)));
-vec4 sw = heightBlend(splatBase(), lum * 1.6);
+vec4 sw = heightBlend(sb, lum * 1.6);
 vec3 alb = colG * sw.x + colF * sw.y + colM * sw.z + colR * sw.w;
 alb *= 0.82 + 0.36 * macro;
 // пласты породы и пятна на крутых склонах (особенно по краю карты)
-{
+if (sw.w > 0.01) {   // только где есть скалы
   float strata = smoothstep(0.3, 0.7, fract(vTerrWorld.y * 0.07 + (vTerrWorld.x + vTerrWorld.z) * 0.006 + tNoise(vTerrWorld.xz * 0.035) * 0.7));
   float blot = tNoise(vTerrWorld.xz * 0.012) * 0.6 + tNoise(vTerrWorld.xz * 0.05) * 0.4;
   alb *= 1.0 - sw.w * (0.12 + edgeK * 0.2) * (1.0 - strata) - sw.w * edgeK * 0.18 * smoothstep(0.45, 0.75, blot);
@@ -136,10 +144,9 @@ diffuseColor.rgb *= alb;
 `;
 
 const ROUGH_FRAGMENT = /* glsl */`
-float roughnessFactor = roughness * (texture2D(tGrassR, uvG).g * sw.x + texture2D(tForestR, uvF).g * sw.y
-  + texture2D(tMudR, uvM).g * sw.z + texture2D(tRockR, uvR).g * sw.w);
-// земля, трава, листья — матовые (иначе небо даёт белёсый блеск); мокрое — чуть глаже
-roughnessFactor = max(roughnessFactor, 0.85);
+// земля, трава, листья — матовые (ниже 0.85 карта шероховатости всё равно обрезалась,
+// поэтому 4 текстуры шероховатости не читаем — результат тот же)
+float roughnessFactor = 0.92;
 roughnessFactor = mix(roughnessFactor, 0.62, uSeason.w);
 #ifdef HAS_LEAVES
 roughnessFactor = mix(roughnessFactor, max(texture2D(tLeafR, uvL).g, 0.8), leafK);

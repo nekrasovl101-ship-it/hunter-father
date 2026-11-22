@@ -4,6 +4,31 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
+import { CopyShader } from 'three/examples/jsm/shaders/CopyShader.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+
+// Сцена рисуется ОДИН раз в буфер со сглаживанием ×4, дальше эффекты работают с обычными
+// (несглаженными) буферами. Раньше сглаживание ×4 было на всех промежуточных буферах —
+// каждый эффект переписывал картинку ×4, и это съедало ~70% времени кадра.
+class MSAARenderPass extends Pass {
+  constructor(scene, camera, samples = 4) {
+    super();
+    Object.assign(this, { scene, camera });
+    this.needsSwap = false;
+    this.msaa = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
+    this.quad = new FullScreenQuad(new THREE.ShaderMaterial({ ...CopyShader, uniforms: THREE.UniformsUtils.clone(CopyShader.uniforms), depthTest: false, depthWrite: false }));
+  }
+  setSize(w, h) { this.msaa.setSize(w, h); }
+  render(renderer, writeBuffer, readBuffer) {
+    renderer.setRenderTarget(this.msaa);
+    renderer.clear();
+    renderer.render(this.scene, this.camera);
+    this.quad.material.uniforms.tDiffuse.value = this.msaa.texture;
+    renderer.setRenderTarget(this.renderToScreen ? null : readBuffer);
+    this.quad.render(renderer);
+  }
+}
 
 // Постобработка для «Ультры»: HDR-буфер с MSAA ×4, мягкое свечение солнца и бликов,
 // «киношная» цветокоррекция (контраст, тёплые света / холодные тени), виньетка и лёгкое зерно.
@@ -14,8 +39,20 @@ const GradeShader = {
     uniform sampler2D tDiffuse; uniform float uTime; uniform float uVignette; uniform float uWarm;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    // ACES (как у OutputPass) + перевод в sRGB — в этом же проходе, без отдельного прохода по экрану
+    vec3 acesFilmic(vec3 color) {
+      const mat3 ACESInputMat = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
+      const mat3 ACESOutputMat = mat3(vec3(1.60475, -0.10208, -0.00327), vec3(-0.53108, 1.10813, -0.07276), vec3(-0.07367, -0.00605, 1.07602));
+      color *= 1.0 / 0.6;
+      color = ACESInputMat * color;
+      vec3 a = color * (color + 0.0245786) - 0.000090537;
+      vec3 b = color * (0.983729 * color + 0.4329510) + 0.238081;
+      color = ACESOutputMat * (a / b);
+      return clamp(color, 0.0, 1.0);
+    }
+    vec3 toSRGB(vec3 c) { return mix(c * 12.92, pow(c, vec3(0.41666)) * 1.055 - 0.055, step(0.0031308, c)); }
     void main(){
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      vec3 c = toSRGB(acesFilmic(texture2D(tDiffuse, vUv).rgb));
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // насыщенность чуть выше, S-кривая контраста
       c = mix(vec3(l), c, 1.12);
@@ -66,20 +103,27 @@ export class Post {
   // lite — телефон: без MSAA, свечение в низком разрешении, меньше выборок у лучей
   constructor(renderer, scene, camera, lite = false) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType });
     this.composer = new EffectComposer(renderer, rt);
-    this.composer.addPass(new RenderPass(scene, camera));
-    this.rays = new ShaderPass({ ...RaysShader, fragmentShader: lite ? RaysShader.fragmentShader.replaceAll('48', '20') : RaysShader.fragmentShader });
+    // Retina (2× и выше): пиксели крошечные — вместо дорогого MSAA×4 (~16 мс на кадр) сглаживаем
+    // края умным SMAA в конце (~2 мс). На обычных мониторах — MSAA×4, как было.
+    this.retina = renderer.getPixelRatio() >= 1.9;
+    this.composer.addPass(new MSAARenderPass(scene, camera, this.retina ? 0 : 4));
+    this.rays = new ShaderPass({ ...RaysShader, fragmentShader: RaysShader.fragmentShader.replaceAll('48', lite ? '14' : '24').replace('w *= 0.955;', lite ? 'w *= 0.92;' : 'w *= 0.915;') });
     this.composer.addPass(this.rays);
     this.camera = camera;
     this._sp = new THREE.Vector3();
     this._fw = new THREE.Vector3();
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / (lite ? 4 : 2), size.y / (lite ? 4 : 2)), 0.22, 0.55, 0.92);
+    // свечение размытое по природе — считаем в 1/4 разрешения (на вид то же, в 4 раза дешевле)
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.22, 0.55, 0.92);
+    // композер задаёт полный размер, а свечение само делит на 2 — делим ещё на 2
+    const bloomSetSize = this.bloom.setSize.bind(this.bloom);
+    this.bloom.setSize = (w, h) => bloomSetSize(Math.max(2, Math.round(w / 2)), Math.max(2, Math.round(h / 2)));
     this.lite = lite;
     this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
-    this.grade = new ShaderPass(GradeShader);
+    this.grade = new ShaderPass(GradeShader);   // тонировка ACES + цвет + виньетка — один проход
     this.composer.addPass(this.grade);
+    if (this.retina) this.composer.addPass(new SMAAPass(size.x, size.y));
     this.renderer = renderer;
   }
 
@@ -102,6 +146,7 @@ export class Post {
       // сила лучей: солнце в кадре или рядом, сильнее у горизонта
       const onScreen = Math.max(0, 1 - Math.max(Math.abs(p.x), Math.abs(p.y)) / 1.6);
       u.uStrength.value = facing > 0 ? onScreen * Math.min(1, facing * 2) * (1.2 - sunDir.y * 0.5) * 2.2 * k : 0;
+      this.rays.enabled = u.uStrength.value > 0.002;   // солнца нет в кадре — проход не нужен
       if (sunColor) u.uTint.value.copy(sunColor);
     }
     this.composer.render(dt);
