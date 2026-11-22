@@ -204,9 +204,15 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
       sphere.center.set(x, heightAt(x, z) + 0.4, z);
       sphere.radius = cell * 0.72 + 2; // кусок + высота травы и перепад рельефа внутри куска
       m.visible = far < dist && (!inner || far + cell * 1.5 > inner * 0.75) && frustum.intersectsSphere(sphere);
+      if (!m.visible) continue;
+      // в дальней зоне травинки и так уменьшаются почти до нуля (fade в шейдере) — рисуем их там реже:
+      // на вид то же, а вершин заметно меньше
+      const fadeK = 1 - THREE.MathUtils.smoothstep(Math.max(0, far), dist * 0.38, dist);
+      m.geometry.instanceCount = Math.round(m.full * layer.frac * Math.max(0.15, Math.pow(fadeK, 0.85)));
     }
   };
-  layer.setFraction = (f) => { for (const m of layer.chunks) m.geometry.instanceCount = Math.round(m.full * f); };
+  layer.frac = 1;
+  layer.setFraction = (f) => { layer.frac = f; };
   return layer;
 }
 

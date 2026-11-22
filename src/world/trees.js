@@ -220,7 +220,8 @@ const NEEDLE_SEASON = /* glsl */`
 function crownMaterial(map, shared, preset, flutter, broad = false) {
   const m = new THREE.MeshLambertMaterial({ map, alphaTest: 0.42, side: THREE.DoubleSide });
   m.alphaToCoverage = !!preset.antialias;
-  m.customProgramCacheKey = () => 'crown' + broad;
+  if (preset.antialias) m.defines = { ...m.defines, DARK_FOLIAGE: '' };
+  m.customProgramCacheKey = () => 'crown' + broad + (preset.antialias ? 'd' : '');
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = shared.uTime;
     sh.uniforms.uSeason = shared.uSeason;
@@ -242,6 +243,9 @@ function crownMaterial(map, shared, preset, flutter, broad = false) {
         // у каждого дерева свой оттенок
         float hsh = fract(sin(ip.x * 12.9898 + ip.z * 78.233) * 43758.5453);
         vTint = mix(vec3(0.82, 0.93, 0.78), vec3(1.12, 1.06, 0.86), hsh) * 0.85;
+        #ifdef DARK_FOLIAGE
+        vTint *= vec3(0.74, 0.78, 0.74); // «Высокая»/«Ультра»: листва и хвоя темнее, как в настоящем лесу
+        #endif
         vHash = hsh; vTop = clamp(position.y * 0.08 + length(position.xz) * 0.15, 0.0, 1.0);`)
       // свет одинаковый с обеих сторон карточки + лёгкая «просвечиваемость»
       .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>');
@@ -260,7 +264,11 @@ function crownMaterial(map, shared, preset, flutter, broad = false) {
         #endif
         // рассеянный свет внутри листвы: в тени кроны и кусты не чернеют
         #if NUM_HEMI_LIGHTS > 0
-        outgoingLight += diffuseColor.rgb * mix(hemisphereLights[0].groundColor, hemisphereLights[0].skyColor, 0.6) * 0.8;
+        outgoingLight += diffuseColor.rgb * mix(hemisphereLights[0].groundColor, hemisphereLights[0].skyColor, 0.6) * 0.8
+          #ifdef DARK_FOLIAGE
+          * 0.75
+          #endif
+          ;
         #endif
         #include <opaque_fragment>`);
   };
