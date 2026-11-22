@@ -246,7 +246,7 @@ class Game {
   pause(v) {
     this.paused = v;
     $('#pause').classList.toggle('hidden', !v);
-    if (!v) this.input.requestLock();
+    if (!v) this.input.requestLock(true); // «Продолжить» — это клик, захват мыши разрешён
   }
 
   shoot() {
@@ -828,6 +828,9 @@ class Game {
 
   updateHud(dt) {
     const hud = this.hud;
+    // подсказка «кликните» — пока мышь не захвачена (только на компьютере)
+    const needLock = !isTouch && !this.input.locked && !this.input.dragLook && !this.paused && this.running;
+    if (needLock !== this._needLock) { this._needLock = needLock; $('#lock-hint').classList.toggle('hidden', !needLock); $('#game').classList.toggle('locked', this.input.locked); }
     hud.update(dt, { gun: this.gun, yaw: this.driving ? this.driving.heading + Math.PI : this.player.yaw, score: this.score, kills: this.kills, showFps: settings.showFps });
     if (settings.showFps) hud.fps.textContent = hud.fps.textContent.replace(/ ·.*$/, '') + ` · ${this.renderer.info.render.calls} dc · Q${this.qLevel || 0}`;
     $('#health-bar').style.width = `${this.player.health}%`;

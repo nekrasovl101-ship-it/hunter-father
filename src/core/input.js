@@ -37,7 +37,8 @@ export class Input {
 
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;
-      if (!this.locked && !this.dragLook) { this.requestLock(); return; }
+      // клик по экрану захватывает мышь (браузер разрешает захват только по клику)
+      if (!this.locked && !this.dragLook) { this.requestLock(true); return; }
       if (e.button === 0) {
         // в режиме перетаскивания стреляем по «клику» (без движения), а не по нажатию
         if (this.dragLook && !this.locked) this._down = { x: e.clientX, y: e.clientY };
@@ -64,6 +65,7 @@ export class Input {
     });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === canvas;
+      if (this.locked) this._lockFails = 0;
       if (!this.locked) { this.aim = false; this.fireHeld = false; }
       this.onLockChange?.(this.locked);
     });
@@ -71,12 +73,25 @@ export class Input {
     if (touchRoot) this._setupTouch(touchRoot);
   }
 
-  requestLock() {
+  // Захват мыши (Pointer Lock): курсор скрыт, камера поворачивается сразу от движения мыши.
+  // fromClick — запрос сделан по клику игрока. Без клика браузер отказывает — это нормально:
+  // показываем подсказку «кликните», а не переходим насовсем в режим перетаскивания.
+  requestLock(fromClick = false) {
     if (this.isTouch || this.dragLook) return;
+    const c = this.canvas;
+    if (!c.requestPointerLock) { this.dragLook = true; return; }
+    const fail = () => { if (fromClick && ++this._lockFails >= 2) this.dragLook = true; };
+    this._lockFails ||= 0;
     try {
-      const p = this.canvas.requestPointerLock?.();
-      if (p?.catch) p.catch(() => { this.dragLook = true; });
-    } catch { this.dragLook = true; }
+      // «сырое» движение мыши без системного ускорения — точнее и без задержки
+      const p = c.requestPointerLock({ unadjustedMovement: true });
+      if (p?.catch) p.catch((e) => {
+        if (e?.name === 'NotSupportedError') {
+          const p2 = c.requestPointerLock();
+          if (p2?.catch) p2.catch(fail);
+        } else fail();
+      });
+    } catch { try { c.requestPointerLock(); } catch { fail(); } }
   }
 
   consume(name) {

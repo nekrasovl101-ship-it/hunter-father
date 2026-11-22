@@ -209,3 +209,8 @@ body:has(#touch:not(.hidden)) #hotbar .slot i { display: none; }
 #touch .zoom { display: none; right: calc(212px + var(--safe-r)); width: 46px !important; height: 46px !important; font-size: 22px !important; }
 #btn-zin { bottom: calc(190px + var(--safe-b)); } #btn-zout { bottom: calc(132px + var(--safe-b)); }
 body.sniper-aim #touch .zoom { display: block; }
+
+#lock-hint { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); background: rgba(10, 12, 9, 0.7); padding: 10px 18px;
+  border-radius: 10px; font-size: 15px; font-weight: 600; border: 1px solid rgba(217, 164, 65, 0.6); }
+#lock-hint.hidden { display: none; }
+canvas#game.locked { cursor: none; }
