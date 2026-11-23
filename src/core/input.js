@@ -16,6 +16,7 @@ export class Input {
 
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
+      if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA') return;   // пишут в чат
       this.keys.add(e.code);
       // R: в прицеле — выстрел, без прицела — перезарядка (e.code — физическая клавиша, работает и в русской раскладке)
       if (e.code === 'KeyR' && !e.repeat) this._edges.add(this.aim ? 'fire' : 'reload');

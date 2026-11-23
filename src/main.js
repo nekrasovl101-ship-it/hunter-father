@@ -30,6 +30,8 @@ import { AnimalSim, SPECIES, isBlocked, speciesFor } from '../shared/animals.js'
 import { SITES, riverDist, riverX, roadDist, ROAD_HALF, WATER_LEVEL } from '../shared/terrain.js';
 import { Net, createRoom, leaderboard } from './net/net.js';
 import { RemoteHunters } from './entities/hunters.js';
+import { Chat } from './ui/chat.js';
+import { Voice } from './net/voice.js';
 import { ROOM_VEHICLES, SPECIES_IDS, ANIMS, SEND_MS, CODE_LEN, MAX_PLAYERS } from '../shared/protocol.js';
 
 const $ = (s) => document.querySelector(s);
@@ -140,7 +142,8 @@ class Game {
 
     onProgress(0.7, 'Животные и машины…');
     this.input = new Input(canvas, isTouch ? $('#touch') : null, settings);
-    this.input.onLockChange = (locked) => { if (!locked && this.running && !isTouch) this.pause(true); };
+    // мышь отпущена: пауза — кроме случая, когда игрок пишет в чат
+    this.input.onLockChange = (locked) => { if (!locked && this.running && !isTouch && !this.chat?.isOpen) this.pause(true); };
     addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.input.dragLook && this.running) this.pause(!this.paused); });
     this.player = new Player(camera, this.ground, this.world, this.sound);
     // шаги по лужам: та же карта, что рисует лужи
@@ -251,6 +254,7 @@ class Game {
       $('#room-tag').classList.remove('hidden');
       $('#btn-board').classList.remove('hidden');
       this.renderBoard();
+      this._startComms();
     }
     addEventListener('keydown', (e) => { if (e.code === 'Tab' && this.net) { e.preventDefault(); $('#board').classList.toggle('hidden'); } });
     $('#touch').classList.toggle('hidden', !isTouch);
@@ -258,6 +262,52 @@ class Game {
     this.renderer.setAnimationLoop(() => this.frame());
     this.input.enabled = true;
     this.input.requestLock();
+  }
+
+  // ---------- чат и голос (только в онлайне) ----------
+  _startComms() {
+    const net = this.net;
+    this.chat = new Chat((text) => net.send({ t: 'chat', text }));
+    this.chat.show(true);
+    this.chat.add('', 'Enter или T — написать в чат · G (держать) или 🎤 — голос', 'sys');
+    this.voice = new Voice(net, this.sound);
+    this.voice.onChange = () => this._voiceUi();
+    this.voice.callAll(this.welcome.players.map((p) => p.id));
+    this.micOf = new Set();
+    for (const b of ['#btn-chat', '#btn-mic']) $(b).classList.remove('hidden');
+    const tap = (sel, fn) => {
+      $(sel).addEventListener('click', fn);
+      $(sel).addEventListener('touchstart', (e) => { e.preventDefault(); fn(); }, { passive: false });
+    };
+    tap('#btn-chat', () => { this.sound.unlock(); this.chat.open(); });
+    tap('#btn-mic', async () => {
+      this.sound.unlock();
+      const ok = await this.voice.toggleMic();
+      if (!ok) this.chat.add('', 'Нет доступа к микрофону — разрешите его в настройках браузера', 'sys');
+    });
+    addEventListener('keydown', (e) => {
+      if (!this.running || this.paused || e.repeat || this.chat.isOpen) return;
+      if (e.target?.tagName === 'INPUT') return;
+      if (e.code === 'Enter' || e.code === 'KeyT') { e.preventDefault(); this.input.keys.clear(); this.chat.open(); }
+      if (e.code === 'KeyG') this.voice.setPtt(true);
+    });
+    addEventListener('keyup', (e) => { if (e.code === 'KeyG') this.voice.setPtt(false); });
+    addEventListener('blur', () => this.voice.setPtt(false));
+    this._voiceUi();
+  }
+
+  _voiceUi() {
+    const v = this.voice;
+    if (!v) return;
+    const btn = $('#btn-mic');
+    btn.classList.toggle('on', v.micOn);
+    btn.classList.toggle('denied', v.denied);
+    btn.title = v.micOn ? 'Микрофон включён (нажмите, чтобы выключить)' : 'Включить микрофон · G — говорить, пока держите';
+    const names = v.speaking().map((id) => this.roster.get(id)).filter(Boolean);
+    const parts = [];
+    if (v.talking) parts.push('<span class="me">🎙 Вы в эфире</span>');
+    for (const n of names) parts.push(`<span>🔊 ${esc(n)}</span>`);
+    $('#voice-ind').innerHTML = parts.join('');
   }
 
   pause(v) {
@@ -632,8 +682,11 @@ class Game {
   _bindNet() {
     const net = this.net;
     net.on('snap', (m) => { this.snap = m; })
-      .on('join', (m) => { this.roster.set(m.id, m.nick); this.hunters.add(m.id, m.nick, m.g); this.hud?.message(`${m.nick} присоединился к охоте`); })
-      .on('leave', (m) => { this.hud?.message(`${this.roster.get(m.id) || 'Охотник'} ушёл`); this.roster.delete(m.id); this.hunters.remove(m.id); })
+      .on('join', (m) => { this.roster.set(m.id, m.nick); this.hunters.add(m.id, m.nick, m.g); this.hud?.message(`${esc(m.nick)} присоединился к охоте`); this.chat?.add('', `${m.nick} присоединился`, 'sys'); })
+      .on('leave', (m) => { const n = this.roster.get(m.id) || 'Охотник'; this.hud?.message(`${esc(n)} ушёл`); this.chat?.add('', `${n} ушёл`, 'sys'); this.roster.delete(m.id); this.hunters.remove(m.id); this.voice?.remove(m.id); })
+      .on('chat', (m) => { this.chat?.add(m.nick, m.text, m.id === net.id ? 'me' : ''); if (m.id !== net.id) this.sound.chatPing?.(); })
+      .on('rtc', (m) => this.voice?.signal(m.from, m.data))
+      .on('mic', () => this._voiceUi())
       .on('scores', (m) => { this.scores = m; const me = m.list.find((q) => q.id === net.id); if (me) { this.score = me.score; this.kills = me.kills; } this.renderBoard(); })
       .on('dmg', (m) => this.damage(m.dmg, m.species))
       .on('hit', (m) => {
@@ -681,6 +734,12 @@ class Game {
       for (const id of [...this.hunters.list.keys()]) this.hunters.remove(id);
       this.roster.clear();
       for (const p of w.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick, p.g); }
+      // голос: старые соединения больше не действуют — звоним всем заново
+      if (this.voice) {
+        for (const id of [...this.voice.peers.keys()]) this.voice.remove(id);
+        this.voice.callAll(w.players.map((p) => p.id));
+        if (this.voice.talking) this.net.send({ t: 'mic', on: true });
+      }
       this._tag = '';
       this.hud.message('Связь восстановлена');
     } catch (e) {
@@ -734,6 +793,11 @@ class Game {
       });
     }
     this.views.sync([...this.netAnimals.values()], dt, this.camera);
+    // голоса — из голов охотников
+    this.voice?.update(this.camera, (id) => {
+      const h = this.hunters.list.get(id);
+      return h && h.target ? { x: h.x, y: h.y + 1.6, z: h.z } : null;
+    });
   }
 
   renderBoard() {
@@ -956,7 +1020,7 @@ function setupMenu() {
   $('#sens').value = settings.sensitivity;
   $('#controls-help').innerHTML = isTouch
     ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок, 🔭 бинокль, 📱 телефон с картой'
-    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка (в оптике — выстрел) · Space — прыжок · F — машина/вышка/дверь · V — вид от 3-го лица / в машине · 1–7 — инвентарь (2 — снайперская с ночной оптикой, 5 — тепловизор) · B — бинокль · M — телефон (карта) · Esc — пауза';
+    : 'WASD — ходьба · Shift — бег · мышь — камера · ЛКМ — выстрел · ПКМ — оптика · R — перезарядка (в оптике — выстрел) · Space — прыжок · F — машина/вышка/дверь · V — вид от 3-го лица / в машине · 1–7 — инвентарь (2 — снайперская с ночной оптикой, 5 — тепловизор) · B — бинокль · M — телефон (карта) · Enter — чат · G (держать) — голос · Esc — пауза';
 
   // «Ультра» на телефоне — только после предупреждения
   const warnUltra = (sel) => sel.addEventListener('change', () => {

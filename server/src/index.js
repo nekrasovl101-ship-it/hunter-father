@@ -232,6 +232,24 @@ export class Room extends DurableObject {
       }
       case 'exit': this._exitVehicle(p); break;
       case 'ping': this._send(ws, { t: 'pong', c: m.c, s: Date.now() }); break;
+      // текстовый чат: не чаще 2 сообщений в секунду, до 160 символов, без управляющих символов
+      case 'chat': {
+        const now = Date.now();
+        if (now - (p.chatAt || 0) < 500) break;
+        p.chatAt = now;
+        const text = String(m.text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 160);
+        if (text) this._broadcast({ t: 'chat', id: p.id, nick: p.nick, text });
+        break;
+      }
+      // голосовой чат: сервер только пересылает сигналы WebRTC (offer/answer/ice) нужному игроку,
+      // сам звук идёт напрямую между игроками
+      case 'rtc': {
+        const to = this.players.get(m.to | 0);
+        const data = JSON.stringify(m.data || null);
+        if (to && to !== p && data.length < 20000) this._send(to.ws, { t: 'rtc', from: p.id, data: m.data });
+        break;
+      }
+      case 'mic': this._broadcast({ t: 'mic', id: p.id, on: !!m.on }, p.id); break;
     }
   }
 

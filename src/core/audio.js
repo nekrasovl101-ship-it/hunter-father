@@ -42,6 +42,16 @@ export class Sound {
   }
 
   // distance — для чужих выстрелов (онлайн)
+  // тихий «тинь» — пришло сообщение в чат
+  chatPing() {
+    const ctx = this.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(880, t); o.frequency.setValueAtTime(1320, t + 0.07);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.06, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    o.connect(g).connect(this.master); o.start(t); o.stop(t + 0.3);
+  }
+
   shot(distance = 0) {
     const ctx = this.ctx; if (!ctx) return;
     const v = 1 / (1 + distance / 40);

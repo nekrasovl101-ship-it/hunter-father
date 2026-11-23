@@ -235,3 +235,28 @@ canvas#game.locked { cursor: none; }
     radial-gradient(ellipse 3% 3% at 45% 70%, rgba(72, 52, 30, 0.75), rgba(72, 52, 30, 0) 70%),
     radial-gradient(ellipse 6% 4% at 12% 20%, rgba(60, 44, 25, 0.7), rgba(60, 44, 25, 0) 70%),
     radial-gradient(ellipse 5% 6% at 88% 18%, rgba(60, 44, 25, 0.7), rgba(60, 44, 25, 0) 70%); }
+
+/* ---------- чат и голос ---------- */
+#chat { position: fixed; z-index: 13; left: calc(14px + var(--safe-l)); bottom: calc(16px + var(--safe-b)); width: min(360px, 62vw); pointer-events: none; }
+#chat-log { max-height: 30vh; overflow: hidden; display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.35; }
+#chat-log .line { background: rgba(10, 12, 8, 0.55); color: #f0ead8; padding: 3px 8px; border-radius: 8px; align-self: flex-start; max-width: 100%; word-wrap: break-word; transition: opacity 0.8s; text-shadow: 0 1px 2px #000; }
+#chat-log .line b { color: var(--accent); font-weight: 600; }
+#chat-log .line.me b { color: #9fd47a; }
+#chat-log .line.sys { color: #c9c2ae; font-style: italic; font-size: 12px; }
+#chat-log .line.old { opacity: 0; }
+#chat.open #chat-log { overflow-y: auto; pointer-events: auto; }
+#chat.open #chat-log .line.old { opacity: 0.85; }
+#chat-input { display: none; width: 100%; margin-top: 6px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(217, 164, 65, 0.6); background: rgba(10, 12, 8, 0.8); color: #fff; font-size: 16px; pointer-events: auto; }
+#chat.open #chat-input { display: block; }
+button.comm { position: fixed; z-index: 12; width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 50%; font-size: 20px; background: rgba(0, 0, 0, 0.4); border: 2px solid rgba(255, 255, 255, 0.3); }
+#btn-mic.on { background: rgba(70, 170, 70, 0.75); border-color: #b6f0a0; }
+#btn-mic.denied { opacity: 0.5; }
+body:not(:has(#touch:not(.hidden))) #btn-chat { bottom: calc(122px + var(--safe-b)); right: calc(20px + var(--safe-r)); }
+body:not(:has(#touch:not(.hidden))) #btn-mic { bottom: calc(174px + var(--safe-b)); right: calc(20px + var(--safe-r)); }
+body:has(#touch:not(.hidden)) #btn-chat { top: 40px; right: calc(176px + var(--safe-r)); }
+body:has(#touch:not(.hidden)) #btn-mic { top: 40px; right: calc(228px + var(--safe-r)); }
+body:has(#touch:not(.hidden)) #chat { bottom: auto; top: 96px; left: calc(52px + var(--safe-l)); width: min(300px, 50vw); }
+body:has(#touch:not(.hidden)) #chat-log { max-height: 22vh; font-size: 12px; }
+#voice-ind { position: fixed; z-index: 12; left: 50%; transform: translateX(-50%); top: 44px; display: flex; gap: 8px; pointer-events: none; }
+#voice-ind span { background: rgba(10, 12, 8, 0.6); color: #e8f5dc; padding: 3px 10px; border-radius: 12px; font-size: 13px; }
+#voice-ind span.me { background: rgba(60, 150, 60, 0.7); }
