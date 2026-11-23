@@ -146,7 +146,7 @@ class Game {
     // шаги по лужам: та же карта, что рисует лужи
     if (this.puddles) this.player.puddleAt = (x, z) => this.puddles.wetAt(x, z);
     // своё тело (вид от третьего лица) и падения в грязь
-    this.body = new SelfBody(scene, preset);
+    this.body = new SelfBody(scene, preset, settings.gender);
     this.tp = false;
     this.mudFlash = 0;
     this.player.onFall = (kind) => {
@@ -164,7 +164,7 @@ class Game {
       // онлайн: животными управляет сервер
       this.sim = null;
       this.hunters = new RemoteHunters(scene, this.ground, preset);
-      for (const p of this.welcome.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick); }
+      for (const p of this.welcome.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick, p.g); }
       this._bindNet();
     } else {
       this.sim = new AnimalSim(this.world, (Math.random() * 1e9) | 0, this.map);
@@ -632,7 +632,7 @@ class Game {
   _bindNet() {
     const net = this.net;
     net.on('snap', (m) => { this.snap = m; })
-      .on('join', (m) => { this.roster.set(m.id, m.nick); this.hunters.add(m.id, m.nick); this.hud?.message(`${m.nick} присоединился к охоте`); })
+      .on('join', (m) => { this.roster.set(m.id, m.nick); this.hunters.add(m.id, m.nick, m.g); this.hud?.message(`${m.nick} присоединился к охоте`); })
       .on('leave', (m) => { this.hud?.message(`${this.roster.get(m.id) || 'Охотник'} ушёл`); this.roster.delete(m.id); this.hunters.remove(m.id); })
       .on('scores', (m) => { this.scores = m; const me = m.list.find((q) => q.id === net.id); if (me) { this.score = me.score; this.kills = me.kills; } this.renderBoard(); })
       .on('dmg', (m) => this.damage(m.dmg, m.species))
@@ -676,11 +676,11 @@ class Game {
     if (attempt > 15) { this.hud.message('Не удалось переподключиться. Вернитесь в меню.', 'warn'); return; }
     await new Promise((r) => setTimeout(r, Math.min(5000, 1000 + attempt * 500)));
     try {
-      const w = await this.net.connect(this.net.code, settings.nick);
+      const w = await this.net.connect(this.net.code, settings.nick, settings.gender);
       if (this.driving) { this.driving.driver = null; this.driving.speed = 0; this.driving = null; this.sound.engineStop(); document.body.classList.remove('driving'); }
       for (const id of [...this.hunters.list.keys()]) this.hunters.remove(id);
       this.roster.clear();
-      for (const p of w.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick); }
+      for (const p of w.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick, p.g); }
       this._tag = '';
       this.hud.message('Связь восстановлена');
     } catch (e) {
@@ -709,7 +709,7 @@ class Game {
       for (const [id, ti, x, z, h, ai, sp] of snap.a) {
         let a = this.netAnimals.get(id);
         if (!a) { a = { id }; this.netAnimals.set(id, a); }
-        a.type = SPECIES_IDS[ti]; a.x = x; a.z = z; a.heading = h; a.anim = ANIMS[ai]; a.speed = sp;
+        a.type = SPECIES_IDS[ti]; a.x = x; a.z = z; a.heading = h; a.anim = ANIMS[ai]; a.speed = sp; a.t = performance.now();
         a.state = a.anim === 'death' ? 'dead' : 'alive';
         seen.add(id);
       }
@@ -950,6 +950,9 @@ function setupMenu() {
   const mapSel = $('#map-sel');
   mapSel.value = settings.map || 'forest';
   mapSel.addEventListener('change', () => { settings.map = mapSel.value; saveSettings(settings); });
+  const genderSel = $('#gender-sel');
+  genderSel.value = settings.gender || 'm';
+  genderSel.addEventListener('change', () => { settings.gender = genderSel.value; saveSettings(settings); });
   $('#sens').value = settings.sensitivity;
   $('#controls-help').innerHTML = isTouch
     ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок, 🔭 бинокль, 📱 телефон с картой'
@@ -1034,10 +1037,10 @@ function setupMenu() {
     status('Подключение…');
     try {
       // одна автоматическая повторная попытка при сетевом сбое (мобильная сеть и т. п.)
-      const welcome = await net.connect(code, settings.nick).catch(async (e) => {
+      const welcome = await net.connect(code, settings.nick, settings.gender).catch(async (e) => {
         if (/не найдена|заполнена/.test(e.message)) throw e;
         await new Promise((r) => setTimeout(r, 1200));
-        return net.connect(code, settings.nick);
+        return net.connect(code, settings.nick, settings.gender);
       });
       // звук разрешаем, пока ещё есть «жест» пользователя
       await launch(net, welcome);

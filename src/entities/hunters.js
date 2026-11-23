@@ -31,15 +31,17 @@ export class RemoteHunters {
     loadModel('hunter');
   }
 
-  add(id, nick) {
+  // g: 'm' — охотник, 'f' — охотница
+  add(id, nick, g = 'm') {
     if (this.list.has(id)) { this.list.get(id).nick = nick; return; }
+    const key = g === 'f' ? 'huntress' : 'hunter';
     const v = { id, nick, x: 0, y: 0, z: 0, yaw: 0, model: null, label: nickSprite(nick), target: null, flashT: 0 };
     this.list.set(id, v);
-    loadModel('hunter').then((asset) => {
+    loadModel(key).then((asset) => {
       if (!this.list.has(id)) return;
       v.model = new ModelInstance(asset, this.preset.shadows);
       v.model.play('idle');
-      const cfg = MODELS.hunter.rifle;
+      const cfg = MODELS[key].rifle;
       const bone = v.model.root.getObjectByName(cfg.bone);
       if (bone) {
         // компенсируем масштаб скелета, чтобы ружьё было «в метрах»
@@ -130,13 +132,14 @@ export class RemoteHunters {
 // Своё тело — для вида от третьего лица (V): та же модель охотника, ружьё в руке, анимации по движению,
 // грязь на одежде
 export class SelfBody {
-  constructor(scene, preset) {
+  constructor(scene, preset, g = 'm') {
     this.scene = scene;
     this.ready = false;
-    loadModel('hunter').then((asset) => {
+    const key = g === 'f' ? 'huntress' : 'hunter';
+    loadModel(key).then((asset) => {
       this.model = new ModelInstance(asset, preset.shadows);
       this.model.play('idle');
-      const cfg = MODELS.hunter.rifle;
+      const cfg = MODELS[key].rifle;
       const bone = this.model.root.getObjectByName(cfg.bone);
       if (bone) {
         this.model.root.updateMatrixWorld(true);

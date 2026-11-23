@@ -68,7 +68,9 @@ export class AnimalViews {
   _gait(v, a, dt) {
     const inner = v.model.root.children[0];
     const base = -v.model.asset.minY * v.model.asset.scale;
+    const lu = v.model.legU;
     if (a.state === 'dead') {
+      if (lu) lu.value.y = 0;
       v.deadRoll = Math.min(Math.PI / 2 * 0.92, (v.deadRoll || 0) + dt * 2.2);
       inner.rotation.z = v.deadRoll;
       inner.position.y = base * (1 - v.deadRoll * 0.35);
@@ -77,8 +79,17 @@ export class AnimalViews {
     v.deadRoll = 0; inner.rotation.z = 0;
     const h = v.model.asset.cfg.height;
     const sp = a.speed || 0;
-    v.gaitT = (v.gaitT || 0) + dt * (sp > 0.2 ? 1.2 + sp * 0.55 / Math.sqrt(h) : 0);
+    const freq = sp > 0.2 ? 0.9 + sp * 0.5 / Math.sqrt(h) : 0;   // шагов в секунду
+    v.gaitT = (v.gaitT || 0) + dt * freq;
     const ph = v.gaitT * Math.PI * 2;
+    if (lu) {
+      // размах ноги: за цикл зверь проходит sp/freq метров — копыто качается на четверть шага
+      // (в единицах модели: делим на масштаб); плавно нарастает/затухает при старте и остановке
+      const legH = lu.value.z * v.model.asset.scale;
+      const want = freq > 0 ? Math.min(0.55, (sp / freq) * 0.3 / legH) : 0;
+      lu.value.y += (want - lu.value.y) * Math.min(1, dt * 6);
+      lu.value.x = ph;
+    }
     const run = Math.min(1, Math.max(0, (sp - 3) / 4));
     const amp = Math.min(0.06 * h, sp * 0.012 * h) * (1 + run * 1.5);
     inner.position.y = base + Math.abs(Math.sin(ph)) * amp * (0.5 + run);
@@ -98,18 +109,25 @@ export class AnimalViews {
     for (const a of animals) {
       seen.add(a.id);
       const v = this.views.get(a.id) || this._create(a);
-      // сглаживание (для онлайна сервер шлёт ~10 раз/с)
-      // в одиночной игре зверь рисуется ровно там, где его считает симуляция (без запаздывания)
-      const k = this.smooth ? Math.min(1, dt * 12) : 1;
-      v.x += (a.x - v.x) * k;
-      v.z += (a.z - v.z) * k;
+      // Плавность: положение из симуляции/сервера обновляется рывками (сервер шлёт ~10 раз/с,
+      // дальних зверей симуляция считает реже) — поэтому «досчитываем» движение по скорости и
+      // направлению на время, прошедшее с последнего обновления. Зверь идёт ровно, без дёрганий.
+      const moving = a.anim === 'walk' || a.anim === 'run';
+      const age = !moving ? 0 : this.smooth ? Math.min(0.25, (performance.now() - (a.t || 0)) / 1000) : Math.min(0.35, a.lod || 0);
+      const px = a.x + Math.sin(a.heading) * (a.speed || 0) * age;
+      const pz = a.z + Math.cos(a.heading) * (a.speed || 0) * age;
+      const k = this.smooth ? Math.min(1, dt * 10) : 1;
+      // большой скачок (появился, перепрыгнул) — сразу на место
+      if ((px - v.x) ** 2 + (pz - v.z) ** 2 > 36) { v.x = px; v.z = pz; }
+      v.x += (px - v.x) * k;
+      v.z += (pz - v.z) * k;
       let dh = a.heading - v.heading;
       dh = Math.atan2(Math.sin(dh), Math.cos(dh));
-      v.heading += dh * k;
+      v.heading += dh * (this.smooth ? Math.min(1, dt * 8) : Math.min(1, dt * 14));
       if (!v.model) continue;
       const root = v.model.root;
       // высота — та же, по которой считаются попадания (heightAt), иначе пуля проходит мимо «тела»
-      const y = this.smooth ? heightAt(v.x, v.z) : a.y ?? heightAt(v.x, v.z);
+      const y = age > 0 || this.smooth ? heightAt(v.x, v.z) : a.y ?? heightAt(v.x, v.z);
       root.position.set(v.x, y, v.z);
       root.rotation.y = v.heading;
 

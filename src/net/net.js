@@ -25,13 +25,13 @@ export class Net {
 
   on(type, fn) { this.handlers[type] = fn; return this; }
 
-  connect(code, nick) {
+  connect(code, nick, g = 'm') {
     this.code = code;
     return new Promise((resolve, reject) => {
       const url = BASE.replace(/^http/, 'ws') + '/ws/' + encodeURIComponent(code);
       const ws = (this.ws = new WebSocket(url));
       let welcomed = false;
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', nick }));
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', nick, g }));
       ws.onmessage = (e) => {
         let m;
         try { m = JSON.parse(e.data); } catch { return; }

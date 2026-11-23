@@ -52,12 +52,12 @@ function flashTexture() {
   return new THREE.CanvasTexture(c);
 }
 
-export const MAG_SIZE = 5;
+export const MAG_SIZE = 10;
 // Оружие: охотничий карабин и снайперская винтовка (свой магазин, медленнее затвор, сильнее отдача,
 // оптика с переменным приближением 4×–16× и ночным видением)
 export const WEAPONS = {
-  rifle: { name: 'Ружьё', mag: 5, reserve: 80, cycle: 0.95, kick: 1, scale: 1 },
-  sniper: { name: 'Снайперская', mag: 5, reserve: 50, cycle: 1.35, kick: 1.6, scale: 1.14 },
+  rifle: { name: 'Ружьё', mag: 10, reserve: 150, cycle: 0.95, kick: 1, scale: 1 },
+  sniper: { name: 'Снайперская', mag: 10, reserve: 100, cycle: 1.35, kick: 1.6, scale: 1.14 },
 };
 
 export class Rifle {
@@ -77,8 +77,8 @@ export class Rifle {
     this.weapon = 'rifle';
     this.magSize = MAG_SIZE;
     this.ammo = MAG_SIZE;
-    this.reserve = 80;
-    this.stock = { rifle: { ammo: MAG_SIZE, reserve: 80 }, sniper: { ammo: WEAPONS.sniper.mag, reserve: WEAPONS.sniper.reserve } };
+    this.reserve = 150;
+    this.stock = { rifle: { ammo: MAG_SIZE, reserve: 150 }, sniper: { ammo: WEAPONS.sniper.mag, reserve: WEAPONS.sniper.reserve } };
     this.state = 'ready';   // ready | cycling | reloading
     this.timer = 0;
     this.aimT = 0;
@@ -158,7 +158,7 @@ export class Rifle {
       if (this.ammo < this.magSize && this.reserve > 0) {
         this.ammo++; this.reserve--;
         this.sound.reloadRound(0);
-        this.timer = 0.42;
+        this.timer = 0.3;
       } else {
         this.state = 'ready';
         this.sound.bolt();

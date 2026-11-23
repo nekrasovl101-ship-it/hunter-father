@@ -82,7 +82,7 @@ export class Room extends DurableObject {
     // восстановление после «гибернации»: игроки берутся из вложений сокетов
     for (const ws of ctx.getWebSockets()) {
       const a = ws.deserializeAttachment();
-      if (a) this.players.set(a.id, this._newPlayer(a.id, a.nick, ws, a.score, a.kills));
+      if (a) { const q = this._newPlayer(a.id, a.nick, ws, a.score, a.kills); q.g = a.g === 'f' ? 'f' : 'm'; this.players.set(a.id, q); }
     }
     this.nextId = Math.max(0, ...this.players.keys()) + 1;
     if (this.players.size) this._startLoop();
@@ -193,14 +193,15 @@ export class Room extends DurableObject {
     switch (m.t) {
       case 'hello': {
         p.nick = cleanNick(m.nick);
+        p.g = m.g === 'f' ? 'f' : 'm';   // персонаж: мальчик/девочка
         if (p.nick === 'Leva' && p.score < 5e24) p.score = 5e24;   // рекорд владельца игры
-        ws.serializeAttachment({ id: p.id, nick: p.nick, score: p.score, kills: p.kills });
+        ws.serializeAttachment({ id: p.id, nick: p.nick, score: p.score, kills: p.kills, g: p.g });
         this._send(ws, {
           t: 'welcome', id: p.id, code: this._meta('code'), map: this._meta('map') || 'forest',
-          players: [...this.players.values()].map((q) => ({ id: q.id, nick: q.nick })),
+          players: [...this.players.values()].map((q) => ({ id: q.id, nick: q.nick, g: q.g || 'm' })),
           vehicles: this.vehicles.map((v) => ({ id: v.id, key: v.key, driver: v.driver, seats: v.seats })),
         });
-        this._broadcast({ t: 'join', id: p.id, nick: p.nick }, p.id);
+        this._broadcast({ t: 'join', id: p.id, nick: p.nick, g: p.g }, p.id);
         this._sendScores();
         break;
       }
@@ -285,7 +286,7 @@ export class Room extends DurableObject {
       Object.assign(out, { aid: res.animal.id, species: res.animal.type, part: res.part, dist: r1(res.dist), killed: !!res.killed, score: res.score || 0 });
       if (res.killed) {
         p.score += res.score; p.kills++;
-        p.ws.serializeAttachment({ id: p.id, nick: p.nick, score: p.score, kills: p.kills });
+        p.ws.serializeAttachment({ id: p.id, nick: p.nick, score: p.score, kills: p.kills, g: p.g });
         this._broadcast({ t: 'kill', by: p.id, nick: p.nick, species: res.animal.type, score: res.score, part: res.part });
         this._saveBest(p);
         this._sendScores();

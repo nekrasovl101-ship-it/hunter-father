@@ -49,7 +49,7 @@ const defaults = {
   timeOfDay: 'cycle',    // cycle | real | day | sunset | night
   season: 'auto',        // auto (по месяцу) | summer | autumn | winter | spring
   weather: 'auto',       // auto | clear | cloudy | rain | snow | fog
-  map: 'forest',         // forest (тайга) | africa (саванна)
+  map: 'forest', gender: 'm',         // forest (тайга) | africa (саванна)
   v: 2,
   sensitivity: 1,
   showFps: true,

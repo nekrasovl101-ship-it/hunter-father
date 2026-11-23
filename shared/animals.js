@@ -232,7 +232,7 @@ export class AnimalSim {
       let near = Infinity;
       for (const p of players) near = Math.min(near, Math.hypot(p.x - a.x, p.z - a.z));
       a.lod += dt;
-      const step = near < 200 ? 0 : near < 320 ? 0.1 : 0.3;
+      const step = near < 320 ? 0 : near < 450 ? 0.1 : 0.3;
       if (a.lod < step) continue;
       this._updateOne(a, a.lod, players);
       a.lod = 0;

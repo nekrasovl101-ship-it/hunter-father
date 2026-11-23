@@ -46,6 +46,10 @@
 
 Оригиналы паков: https://quaternius.com
 
+## Охотница
+
+- «Animated Woman» — Quaternius, CC0 1.0 — https://poly.pizza/m/qJ2gsTUBHL (одежда перекрашена)
+
 ## Звери Африки (poly.pizza)
 
 | Зверь | Автор | Лицензия | Источник |

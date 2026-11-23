@@ -26,19 +26,26 @@ export const MODELS = {
   // gait — процедурная походка (покачивание, кивки), падение набок при гибели
   zebra: { url: 'models/africa/zebra.glb', height: 1.55, yaw: 0, flatten: true, anims: STD },
   gazelle: { url: 'models/deer.glb', height: 1.05, yaw: 0, flatten: true, tint: 0xc39a64, anims: STD },
-  giraffe: { url: 'models/africa/giraffe.glb', height: 5.0, yaw: -Math.PI / 2, rotX: -Math.PI / 2, gait: true, anims: {} },
-  elephant: { url: 'models/africa/elephant.glb', height: 3.2, yaw: -Math.PI / 2, tint: 0x77716a, gait: true, anims: {} },
-  rhino: { url: 'models/africa/rhino.glb', height: 1.75, yaw: 0, tint: 0x6f6a64, gait: true, anims: {} },
-  hippo: { url: 'models/africa/hippo.glb', height: 1.5, yaw: Math.PI / 2, tint: 0x6a5a60, gait: true, anims: {} },
-  lion: { url: 'models/africa/lion.glb', height: 1.2, yaw: 0, gait: true, anims: {} },
-  hyena: { url: 'models/africa/hyena.glb', height: 0.85, yaw: 0, gait: true, anims: {} },
+  giraffe: { url: 'models/africa/giraffe.glb', height: 5.0, legs: 0.36, yaw: -Math.PI / 2, rotX: -Math.PI / 2, gait: true, anims: {} },
+  elephant: { url: 'models/africa/elephant.glb', height: 3.2, legs: 0.4, yaw: -Math.PI / 2, tint: 0x77716a, gait: true, anims: {} },
+  rhino: { url: 'models/africa/rhino.glb', height: 1.75, legs: 0.38, yaw: 0, tint: 0x6f6a64, gait: true, anims: {} },
+  hippo: { url: 'models/africa/hippo.glb', height: 1.5, legs: 0.3, yaw: Math.PI / 2, tint: 0x6a5a60, gait: true, anims: {} },
+  lion: { url: 'models/africa/lion.glb', height: 1.2, legs: 0.48, yaw: 0, gait: true, anims: {} },
+  hyena: { url: 'models/africa/hyena.glb', height: 0.85, legs: 0.5, yaw: 0, gait: true, anims: {} },
   // Другие охотники в онлайне (Quaternius Adventurer, CC0)
   hunter: {
-    url: 'models/hunter.glb', height: 1.8, yaw: 0,
+    url: 'models/hunter.glb', height: 1.8, yaw: 0, person: true,
     anims: { idle: ['Idle_Gun', 'Idle'], walk: ['Walk'], run: ['Run'], aim: ['Idle_Gun_Pointing'], shoot: ['Idle_Gun_Shoot', 'Gun_Shoot'], death: ['Death'], fall: ['HitRecieve_2', 'HitRecieve'] },
     // куда «вкладывать» ружьё: кость и смещение/поворот относительно неё
     rifle: { bone: 'WristR', pos: [0, 0.08, 0.02], rot: [0, 0, -Math.PI / 2] },
+  },  // охотница (Quaternius «Animated Woman», CC0) — тот же скелет и анимации, одежда перекрашена в охотничью
+  huntress: {
+    url: 'models/huntress.glb', height: 1.7, yaw: 0, person: true,
+    recolor: { White: 0x3f4a2c, Grey: 0x2a2822, Orange: 0x4a3c26 },
+    anims: { idle: ['Idle_Gun', 'Idle'], walk: ['Walk'], run: ['Run'], aim: ['Idle_Gun_Pointing'], shoot: ['Idle_Gun_Shoot', 'Gun_Shoot'], death: ['Death'], fall: ['HitRecieve_2', 'HitRecieve'] },
+    rifle: { bone: 'WristR', pos: [0, 0.08, 0.02], rot: [0, 0, -Math.PI / 2] },
   },
+
 };
 
 // Машины. wheels — регулярка по именам мешей колёс; seat — точка глаз водителя (локально, нос машины — +Z);

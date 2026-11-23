@@ -163,7 +163,10 @@ const CLOTHES_GLSL = /* glsl */`
     float c1 = smoothstep(0.52, 0.6, fn3(q * 0.09 + 3.1)), c2 = smoothstep(0.55, 0.62, fn3(q * 0.13 + 7.7));
     vec3 camo = mix(mix(fabric, fabric * vec3(0.62, 0.7, 0.5), c1), fabric * vec3(1.25, 1.12, 0.82), c2);
     fabric = mix(fabric, camo, greenish);
-    diffuseColor.rgb = mix(base, fabric, cloth);
+    // кожа: теплее и насыщеннее (иначе под солнцем выгорает в серо-белый), лёгкий румянец и неровность тона
+    float blush = fn3(q * 0.6 + 5.0);
+    vec3 skinCol = base * vec3(0.9, 0.66, 0.5) * (0.92 + 0.12 * blush);
+    diffuseColor.rgb = mix(skinCol, fabric, cloth);
     // грязь
     float hN = clamp((vFurP.y - uMinY) / uSpanY, 0.0, 1.0);
     float splat = smoothstep(0.55, 0.75, fn3(q * 0.22 + 11.0) + fn3(q * 0.7) * 0.25);
@@ -183,6 +186,69 @@ function findClip(clips, names) {
   return null;
 }
 
+// ---------- Ноги для моделей без скелета ----------
+// Модель цельная, но ноги можно «вычислить»: всё, что ниже линии брюха (legs × высота), —
+// ноги. В вершинном шейдере качаем их вперёд-назад диагональными парами (как рысь у живых
+// зверей): смещение растёт от брюха к копыту, поднятая нога чуть приподнимается.
+const LEG_GLSL = /* glsl */`
+  {
+    vec3 mp = (uToModel * vec4(transformed, 1.0)).xyz;
+    float w = clamp((uLeg.z - mp.y) / uLeg.z, 0.0, 1.0);
+    float fz = mp.z - uLeg.w;
+    w *= 1.0 - smoothstep(0.72, 0.95, abs(fz) / uHalfLen);   // голова/хвост у земли не качаются
+    if (w > 0.0 && uLeg.y > 0.0) {
+      float off = (mp.x >= 0.0) == (fz >= 0.0) ? 0.0 : 3.14159;
+      float s = sin(uLeg.x + off);
+      mp.z += s * uLeg.y * uLeg.z * w;
+      mp.y += max(0.0, cos(uLeg.x + off)) * uLeg.y * uLeg.z * 0.35 * w * w;
+      transformed = (uFromModel * vec4(mp, 1.0)).xyz;
+    }
+  }`;
+const NO_LEG = { value: new THREE.Vector4(0, 0, 1, 0) };
+
+function rigLegs(scene, cfg, height) {
+  // система координат «зверя»: ноль — на земле под центром, вперёд — +Z (с учётом yaw модели)
+  const yawM = new THREE.Matrix4().makeRotationY(cfg.yaw || 0);
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  const meshes = [];
+  scene.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  for (const o of meshes) {
+    const m = yawM.clone().multiply(o.matrixWorld);
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) box.expandByPoint(v.fromBufferAttribute(pos, i).applyMatrix4(m));
+  }
+  const c = box.getCenter(new THREE.Vector3());
+  const T = new THREE.Matrix4().makeTranslation(-c.x, -box.min.y, 0);
+  const leg = { legH: (cfg.legs ?? 0.42) * height, zc: c.z, half: Math.max(1e-3, (box.max.z - box.min.z) / 2) };
+  for (const o of meshes) {
+    const to = T.clone().multiply(yawM).multiply(o.matrixWorld);
+    o.userData.leg = { to: to.toArray(), from: to.clone().invert().toArray(), ...leg };
+  }
+}
+
+// материал-копия с ногами для конкретного зверя (uniform фазы общий на всю модель)
+function legMaterial(m, mesh, legU) {
+  const L = mesh.userData.leg;
+  const n = m.clone();
+  const prev = m.onBeforeCompile;
+  n.userData.legU = legU;
+  n.userData.legTo = new THREE.Matrix4().fromArray(L.to);
+  n.userData.legFrom = new THREE.Matrix4().fromArray(L.from);
+  n.userData.legHalf = L.half;
+  n.onBeforeCompile = function (sh, r) {
+    prev?.call(this, sh, r);
+    sh.uniforms.uLeg = this.userData.legU || NO_LEG;
+    sh.uniforms.uToModel = { value: this.userData.legTo };
+    sh.uniforms.uFromModel = { value: this.userData.legFrom };
+    sh.uniforms.uHalfLen = { value: this.userData.legHalf };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform mat4 uToModel, uFromModel; uniform vec4 uLeg; uniform float uHalfLen;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + LEG_GLSL);
+  };
+  n.customProgramCacheKey = () => (m.customProgramCacheKey ? m.customProgramCacheKey() : '') + '|legs';
+  return n;
+}
+
 export async function loadModel(key) {
   if (cache.has(key)) return cache.get(key);
   const cfg = MODELS[key];
@@ -192,13 +258,15 @@ export async function loadModel(key) {
     if (cfg.rotX) { const g = new THREE.Group(); scene.rotation.x = cfg.rotX; g.add(scene); scene = g; }
     // у части моделей в glTF стоит metallic=1 — без карты окружения они выглядят чёрными
     scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) if (!m.metalnessMap) { m.metalness = 0; m.roughness = Math.max(m.roughness ?? 1, 0.6); } });
+    if (cfg.recolor) scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) if (cfg.recolor[m.name] !== undefined) m.color.set(cfg.recolor[m.name]); });
     if (cfg.flatten) flattenMaterials(scene);
     if (cfg.tint) tintMaterials(scene, new THREE.Color(cfg.tint));
-    furify(scene, key === 'hunter' ? 0.35 : 1, true, key === 'hunter');
+    furify(scene, cfg.person ? 0.35 : 1, true, !!cfg.person);
     scene.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(scene, true);
     const size = box.getSize(new THREE.Vector3());
     const scale = cfg.height / size.y;
+    if (cfg.gait) rigLegs(scene, cfg, size.y);
     const clips = {};
     for (const [k, names] of Object.entries(cfg.anims || {})) clips[k] = findClip(gltf.animations, names);
     return { scene, scale, minY: box.min.y, clips, cfg, size };
@@ -217,9 +285,16 @@ export class ModelInstance {
     inner.rotation.y = asset.cfg.yaw || 0;
     // своя грязь у каждого охотника: материалы-копии со своим uniform
     this.dirtU = { value: 0 };
-    const perInstance = asset.cfg === MODELS.hunter;
+    const perInstance = !!asset.cfg.person;
+    // фаза/размах/высота ног/центр — свои у каждого зверя
+    this.legU = asset.cfg.gait ? { value: new THREE.Vector4(0, 0, 1, 0) } : null;
     inner.traverse((o) => {
       if (!o.isMesh) return;
+      if (this.legU && o.userData.leg) {
+        const L = o.userData.leg;
+        this.legU.value.z = L.legH; this.legU.value.w = L.zc;
+        o.material = Array.isArray(o.material) ? o.material.map((m) => legMaterial(m, o, this.legU)) : legMaterial(o.material, o, this.legU);
+      }
       o.castShadow = castShadow; o.frustumCulled = false;
       if (perInstance) {
         const cp = (m) => { const n = m.clone(); n.onBeforeCompile = m.onBeforeCompile; n.customProgramCacheKey = m.customProgramCacheKey; n.userData.dirtU = this.dirtU; return n; };
