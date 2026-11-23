@@ -133,7 +133,9 @@ function furify(root, strength = 1, smooth = true, clothes = false) {
             float rim = pow(1.0 - max(dot(normalize(normal), normalize(vViewPosition)), 0.0), 3.0);
             outgoingLight += diffuseColor.rgb * rim * 0.45 * ${strength.toFixed(2)};
             // тепловизор: тело тёплое (ярче в центре, к контуру остывает)
-            outgoingLight = mix(outgoingLight, vec3(5.0) * (0.55 + 0.45 * max(dot(normalize(normal), normalize(vViewPosition)), 0.0)), uHeat);
+            // тепловизор: тело тёплое (ярче в центре, к контуру остывает). Метка тепла — пурпурный HDR
+            // (R и B высокие, G = 0): так тепло не спутать с солнцем, бликами и снегом
+            outgoingLight = mix(outgoingLight, vec3(6.0, 0.0, 6.0) * (0.55 + 0.45 * max(dot(normalize(normal), normalize(vViewPosition)), 0.0)), uHeat);
             #include <opaque_fragment>`);
       };
       m.customProgramCacheKey = () => (m0.customProgramCacheKey?.() || '') + 'fur' + strength + (clothes ? 'c' : '');
@@ -185,7 +187,9 @@ export async function loadModel(key) {
   if (cache.has(key)) return cache.get(key);
   const cfg = MODELS[key];
   const p = loader.loadAsync(cfg.url).then((gltf) => {
-    const scene = gltf.scene;
+    let scene = gltf.scene;
+    // модель «лежит» (верх по другой оси) — ставим на ноги
+    if (cfg.rotX) { const g = new THREE.Group(); scene.rotation.x = cfg.rotX; g.add(scene); scene = g; }
     // у части моделей в glTF стоит metallic=1 — без карты окружения они выглядят чёрными
     scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) if (!m.metalnessMap) { m.metalness = 0; m.roughness = Math.max(m.roughness ?? 1, 0.6); } });
     if (cfg.flatten) flattenMaterials(scene);

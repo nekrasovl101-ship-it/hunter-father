@@ -26,13 +26,14 @@ import { Vehicle, VehicleCamera } from './vehicles/vehicle.js';
 import { AnimalViews } from './entities/animals.js';
 import { Hud } from './ui/hud.js';
 import { World } from '../shared/world.js';
-import { AnimalSim, SPECIES, isBlocked } from '../shared/animals.js';
+import { AnimalSim, SPECIES, isBlocked, speciesFor } from '../shared/animals.js';
 import { SITES, riverDist, riverX, roadDist, ROAD_HALF, WATER_LEVEL } from '../shared/terrain.js';
 import { Net, createRoom, leaderboard } from './net/net.js';
 import { RemoteHunters } from './entities/hunters.js';
 import { ROOM_VEHICLES, SPECIES_IDS, ANIMS, SEND_MS, CODE_LEN, MAX_PLAYERS } from '../shared/protocol.js';
 
 const $ = (s) => document.querySelector(s);
+export const fmtScore = (n) => Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const settings = loadSettings();
 
@@ -51,7 +52,7 @@ class Game {
     this.running = false;
     this.paused = false;
     this.clock = new THREE.Clock();
-    this.shared = { uTime: { value: 0 }, uSeason: { value: new THREE.Vector4() }, uRain: { value: 0 } };
+    this.shared = { uTime: { value: 0 }, uSeason: { value: new THREE.Vector4() }, uRain: { value: 0 }, uBiome: { value: 0 } };
     this.vehicles = [];
     this.driving = null;
     this.damageT = 0;
@@ -62,7 +63,10 @@ class Game {
     const T0 = performance.now(); let Tp = T0;
     const onProgress = (k, label) => { if (location.search.includes('timing')) { const n = performance.now(); console.log(`[load] ${label} +${Math.round(n - Tp)} мс (всего ${Math.round(n - T0)})`); Tp = n; } onProgress0(k, label); };
     const preset = (this.preset = getPreset(settings.quality));
-    this.season = seasonFor(settings.season);
+    // карта: лес (тайга) или Африка (саванна); в онлайне — карта комнаты
+    this.map = this.net ? (this.welcome.map || 'forest') : (settings.map || 'forest');
+    this.shared.uBiome.value = this.map === 'africa' ? 1 : 0;
+    this.season = this.map === 'africa' ? 'summer' : seasonFor(settings.season);   // в саванне всегда сухое лето
     this.shared.uSeason.value.copy(seasonVector(this.season));
     this.env = new Environment(settings, this.season, this.shared);
     const canvas = $('#game');
@@ -105,7 +109,7 @@ class Game {
 
     onProgress(0.35, 'Генерация леса…');
     await new Promise((r) => setTimeout(r, 0));
-    this.world = new World();
+    this.world = new World(4242, this.map);
     const terrain = createTerrain(preset, sets, this.shared, createPuddles);
     this.puddles = terrain.puddles;
     this.ground = terrain.ground;
@@ -117,7 +121,7 @@ class Game {
     scene.add(this.grass);
     this.sky = new SkySystem(scene, preset);
     this.sky.winter = this.season === 'winter';
-    terrain.far.material = this.sky.farMaterial(preset.viewDist, sets.rock);
+    terrain.far.material = this.sky.farMaterial(preset.viewDist, sets.rock, this.map === 'africa' ? 1 : 0);
     onProgress(0.5, 'Деревья…');
     this.trees = await createTrees(this.world, preset, sets.bark, sets.barkBroad, this.shared, renderer);
     scene.add(this.trees);
@@ -155,7 +159,7 @@ class Game {
     this.vcam = new VehicleCamera(camera);
     this.views = new AnimalViews(scene, this.ground, preset);
     this.views.smooth = !!this.net;
-    await this.views.preload(Object.keys(SPECIES));
+    await this.views.preload(speciesFor(this.map).map(([k]) => k));   // модели только зверей этой карты
     if (this.net) {
       // онлайн: животными управляет сервер
       this.sim = null;
@@ -163,9 +167,9 @@ class Game {
       for (const p of this.welcome.players) { this.roster.set(p.id, p.nick); if (p.id !== this.net.id) this.hunters.add(p.id, p.nick); }
       this._bindNet();
     } else {
-      this.sim = new AnimalSim(this.world, (Math.random() * 1e9) | 0);
-      // стадо оленей впереди — чтобы сразу было на кого охотиться
-      this.sim.spawnGroup('deer', 0, -70);
+      this.sim = new AnimalSim(this.world, (Math.random() * 1e9) | 0, this.map);
+      // стадо впереди — чтобы сразу было на кого охотиться
+      this.sim.spawnGroup(this.map === 'africa' ? 'zebra' : 'deer', 0, -70);
       this.sim.populate([{ x: 0, z: 0 }]);
     }
 
@@ -409,6 +413,8 @@ class Game {
     this.vision.uniforms.uGain.value = 1.2 + 6 * this.sky.night + 2 * Math.max(0, 0.6 - this.sky.light);
     if (mode) this.vision.tick(dt);
     HEAT.value = thermal ? 1 : 0;
+    // тепловизор-монокуляр с небольшим приближением ×1.7
+    this.player.fovMul += ((thermal ? 0.6 : 1) - (this.player.fovMul || 1)) * Math.min(1, dt * 8);
     // тепловизор видит сквозь туман и темноту дальше
     const fog = this.scene.fog;
     if (thermal) { this._fogBase ??= [fog.near, fog.far]; fog.near = this._fogBase[0] * 3; fog.far = this._fogBase[1] * 3; }
@@ -733,8 +739,8 @@ class Game {
   renderBoard() {
     const el = $('#board-list');
     if (!el) return;
-    const rows = this.scores.list.map((q, i) => `<tr class="${q.id === this.net?.id ? 'me' : ''}"><td>${i + 1}</td><td>${esc(q.nick)}</td><td>${q.kills}</td><td>${q.score}</td></tr>`).join('');
-    const best = this.scores.best.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(q.nick)}</td><td>${q.kills}</td><td>${q.score}</td></tr>`).join('');
+    const rows = this.scores.list.map((q, i) => `<tr class="${q.id === this.net?.id ? 'me' : ''}"><td>${i + 1}</td><td>${esc(q.nick)}</td><td>${q.kills}</td><td>${fmtScore(q.score)}</td></tr>`).join('');
+    const best = this.scores.best.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(q.nick)}</td><td>${q.kills}</td><td>${fmtScore(q.score)}</td></tr>`).join('');
     el.innerHTML = `<h3>Охотники в комнате</h3><table><tr><th>#</th><th>Ник</th><th>Добыча</th><th>Очки</th></tr>${rows}</table>`
       + (best ? `<h3>Рекорды комнаты</h3><table><tr><th>#</th><th>Ник</th><th>Добыча</th><th>Очки</th></tr>${best}</table>` : '');
   }
@@ -840,8 +846,9 @@ class Game {
     }
 
     this.grass.update(cp, p, this.camera, this._hFn ||= (x, z) => this.ground.sample(x, z));
-    this.trees.update(cp);
-    this.rocks.update(cp);
+    const view = this.viewCone();
+    this.trees.update(cp, false, view);
+    this.rocks.update(cp, false, view);
     this.sky.update(cp, t);
     for (const w of [this.water, this.puddleMesh]) {
       if (!w) continue;
@@ -880,6 +887,18 @@ class Game {
     if (this.preset.adaptive) this.adaptResolution(dt);
     if (this.post) { this.renderer.info.reset(); this.post.render(dt, this.sky.sunRealDir, this.sky.sun.color, (1 - this.sky.uniforms.uCover.value) * (1 - this.sky.night), this.sky.sunset); } else if (this.vision.mode) this.vision.render(this.scene, this.camera, 0); else this.renderer.render(this.scene, this.camera);
     this.updateHud(dt);
+  }
+
+  // направление взгляда по горизонтали и косинус половины горизонтального угла обзора + запас 22°
+  viewCone() {
+    const cam = this.camera, v = this._vc ||= { fx: 0, fz: -1, cos: 0 };
+    const d = cam.getWorldDirection(this._vd ||= new THREE.Vector3());
+    const l = Math.hypot(d.x, d.z) || 1;
+    v.fx = d.x / l; v.fz = d.z / l;
+    const half = Math.atan(Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2) * cam.aspect) + 0.38;
+    // смотрим сильно вверх/вниз — конус шире (по горизонтали видно больше)
+    v.cos = Math.abs(d.y) > 0.6 || half >= Math.PI ? -2 : Math.cos(Math.min(Math.PI, half + Math.abs(d.y) * 0.6));
+    return v;
   }
 
   updateHud(dt) {
@@ -928,6 +947,9 @@ function setupMenu() {
   nick.value = settings.nick;
   for (const [k, p] of Object.entries(PRESETS)) quality.add(new Option(p.label, k, false, k === settings.quality));
   tod.value = settings.timeOfDay;
+  const mapSel = $('#map-sel');
+  mapSel.value = settings.map || 'forest';
+  mapSel.addEventListener('change', () => { settings.map = mapSel.value; saveSettings(settings); });
   $('#sens').value = settings.sensitivity;
   $('#controls-help').innerHTML = isTouch
     ? 'Левый джойстик — ходьба (до упора — бег) · свайп справа — камера · кнопки: выстрел, прицел, перезарядка, прыжок, 🔭 бинокль, 📱 телефон с картой'
@@ -979,6 +1001,7 @@ function setupMenu() {
     game = new Game(net, welcome);
     game.sound.unlock();
     window.__game = game;
+    if (!net && settings.nick === 'Leva') game.score = 5e24;   // рекорд владельца игры
     try {
       await game.init((p, label) => {
         $('#load-bar').style.width = `${p * 100}%`;
@@ -995,7 +1018,9 @@ function setupMenu() {
     game.start();
     game.hud.message(net
       ? `Комната <b>${net.code}</b> — передайте код друзьям. Tab — таблица очков.`
-      : `Удачной охоты, ${esc(settings.nick)}! Стадо оленей — впереди, к северу. Машины — у базы за спиной.`);
+      : game.map === 'africa'
+        ? `Сафари, ${esc(settings.nick)}! Стадо зебр — впереди, к северу. Осторожно: львы и гиены нападают, слоны, носороги и бегемоты — если их ранить.`
+        : `Удачной охоты, ${esc(settings.nick)}! Стадо оленей — впереди, к северу. Машины — у базы за спиной.`);
   }
 
   const needNick = () => {
@@ -1026,7 +1051,7 @@ function setupMenu() {
     if (needNick()) return;
     status('Создаём комнату…');
     try {
-      const { code } = await createRoom();
+      const { code } = await createRoom(settings.map || 'forest');
       $('#room-code').value = code;
       await joinRoom(code);
     } catch (e) {
@@ -1051,7 +1076,7 @@ function setupMenu() {
   // общий рейтинг в меню
   leaderboard().then(({ top }) => {
     if (!top?.length) return;
-    $('#lb').innerHTML = top.slice(0, 10).map((r) => `<li><b>${esc(r.nick)}</b> — ${r.score} очк., добыча: ${r.kills}</li>`).join('');
+    $('#lb').innerHTML = top.slice(0, 10).map((r) => `<li><b>${esc(r.nick)}</b> — ${Number(r.score).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} очк., добыча: ${r.kills}</li>`).join('');
     $('#lb-wrap').classList.remove('hidden');
   }).catch(() => {});
 

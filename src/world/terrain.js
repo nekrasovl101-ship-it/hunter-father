@@ -29,7 +29,7 @@ export class Ground {
 const FRAG_PRELUDE = /* glsl */`
 uniform sampler2D tForestA, tMudA, tRockA, tMeadowA;
 uniform vec4 uSeason;
-uniform float uTime, uRain;
+uniform float uTime, uRain, uBiome;
 #ifdef HAS_PUDDLES
 uniform sampler2D tPuddle;
 #endif
@@ -104,6 +104,12 @@ float gl = dot(colG, vec3(0.33));
 vec3 autumnG = mix(vec3(gl) * vec3(1.2, 0.92, 0.45), colF, 0.4);
 alb += sw.x * (autumnG - colG) * uSeason.x * 0.8;
 alb += sw.x * colG * vec3(-0.08, 0.14, -0.1) * uSeason.z;
+// саванна: выгоревшая золотистая трава и красная латеритная земля
+if (uBiome > 0.5) {
+  vec3 golden = vec3(gl) * vec3(1.32, 1.06, 0.58) * (0.95 + 0.2 * macro);
+  alb += sw.x * (golden - colG);
+  alb = mix(alb, alb * vec3(1.28, 0.8, 0.58), clamp(sw.y + sw.z, 0.0, 1.0) * 0.85);
+}
 float leafK = 0.0;
 #ifdef HAS_LEAVES
 vec2 uvL = wuv * 0.55;
@@ -248,6 +254,7 @@ export function createTerrain(preset, sets, shared, puddleFn) {
     Object.assign(sh.uniforms, {
       tMeadowA: { value: sets.meadow.albedo },
       uSeason: shared.uSeason,
+      uBiome: shared.uBiome,
       uTime: shared.uTime, uRain: shared.uRain,
       tPuddle: { value: puddles?.tex || null },
       tForestA: { value: sets.forest.albedo }, tMudA: { value: sets.mud.albedo }, tRockA: { value: sets.rock.albedo },

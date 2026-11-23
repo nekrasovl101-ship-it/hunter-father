@@ -17,7 +17,9 @@ const CELL = 16;
 const GRID_N = Math.ceil((HALF * 2) / CELL);
 
 export class World {
-  constructor(seed = 4242) {
+  // map: 'forest' — тайга; 'africa' — саванна: редкие зонтичные акации (type 2)
+  constructor(seed = 4242, map = 'forest') {
+    this.map = map;
     this.trees = [];   // {x,z,y,s,rot,type,r}  type: 0 = ель, 1 = лиственное
     this.rocks = [];   // {x,z,y,s,rot,r}
     this.grid = new Array(GRID_N * GRID_N);
@@ -61,7 +63,7 @@ export class World {
         const z = gz + (rnd() - 0.5) * step * 0.9;
         const roll = rnd();
         const f = forestAt(x, z);
-        const p = f * 0.8 + 0.02;
+        const p = map === 'africa' ? f * 0.08 + 0.012 : f * 0.8 + 0.02;
         if (roll > p) continue;
         if (riverDist(x, z) < RIVER_HALF + 7) continue;
         if (Math.hypot(x, z) < 12) continue; // точка спавна свободна
@@ -69,7 +71,7 @@ export class World {
         const sl = slopeAt(x, z);
         if (sl > 0.75) continue;
         const pineBias = fbm(x * 0.01, z * 0.01, 2, 21);
-        const type = rnd() < pineBias * 1.4 ? 0 : 1;
+        const type = map === 'africa' ? 2 : rnd() < pineBias * 1.4 ? 0 : 1;
         const s = 0.75 + rnd() * 0.6;
         const t = { x, z, y: heightAt(x, z) - 0.2, s, rot: rnd() * Math.PI * 2, type, r: (type === 0 ? 0.32 : 0.38) * s };
         this.trees.push(t);

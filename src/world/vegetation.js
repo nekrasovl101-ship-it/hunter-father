@@ -45,10 +45,19 @@ export class InstanceLOD {
   constructor(items, matrices, hi, lo, hiDist, farDist) {
     Object.assign(this, { items, matrices, hi, lo, hiDist, farDist });
     this.last = new THREE.Vector3(1e9, 0, 0);
+    this.lastFw = new THREE.Vector2(0, 0);
+    this.lastCos = 2;
   }
-  update(cam, force = false) {
-    if (!force && this.last.distanceToSquared(cam) < 9) return;
+  // view — {fx, fz, cos}: направление взгляда и косинус половины угла обзора (с запасом).
+  // Деревья за спиной и сбоку (дальше ~45 м — их тени до кадра не дотянутся) не рисуются.
+  update(cam, force = false, view = null) {
+    const moved = this.last.distanceToSquared(cam) >= 9;
+    const turned = view && (this.lastFw.x * view.fx + this.lastFw.y * view.fz < 0.985 || Math.abs(view.cos - this.lastCos) > 0.03);
+    if (!force && !moved && !turned) return;
     this.last.copy(cam);
+    if (view) { this.lastFw.set(view.fx, view.fz); this.lastCos = view.cos; }
+    const fx = view ? view.fx : 0, fz = view ? view.fz : 0, cl = view ? view.cos : -2;
+    const near2 = 45 * 45;
     const h2 = this.hiDist * this.hiDist, f2 = this.farDist * this.farDist;
     let nh = 0, nl = 0;
     const capHi = this.hi[0].instanceMatrix.count;
@@ -59,6 +68,7 @@ export class InstanceLOD {
       const it = this.items[i];
       const dx = it.x - cam.x, dz = it.z - cam.z;
       const d2 = dx * dx + dz * dz;
+      if (d2 > near2 && (dx * fx + dz * fz) < cl * Math.sqrt(d2)) continue;   // вне кадра
       if (d2 < h2 && nh < capHi) {
         const src = this.matrices.subarray(i * 16, i * 16 + 16);
         for (const a of hiArr) a.set(src, nh * 16);
@@ -122,6 +132,6 @@ export function createRocks(world, preset, rockSet, mossSet) {
   mesh.receiveShadow = preset.shadows;
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const lod = new InstanceLOD(items, mats, [mesh], null, preset.viewDist * 0.8, preset.viewDist);
-  mesh.update = (cam, force) => lod.update(cam, force);
+  mesh.update = (cam, force, view) => lod.update(cam, force, view);
   return mesh;
 }

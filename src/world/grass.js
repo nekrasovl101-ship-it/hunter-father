@@ -83,6 +83,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
     uHalf: { value: HALF },
     uTime: shared.uTime,
     uSeason: shared.uSeason,
+    uBiome: shared.uBiome,
     uInner: { value: inner },
   };
   const mat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
@@ -98,7 +99,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         uniform vec3 uPlayer;
         uniform float uTile, uDist, uWorld, uHalf, uTime;
         uniform vec4 uSeason;
-        uniform float uInner;
+        uniform float uInner, uBiome;
         varying vec3 vGrassCol;`)
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
       .replace('#include <begin_vertex>', `
@@ -136,6 +137,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         float dry = smoothstep(0.45, 0.8, hs.a) * 0.75 + fract(aOff.w * 13.7) * 0.25;
         dry = mix(dry, 0.75 + dry * 0.5, max(uSeason.x, uSeason.y));
         dry *= 1.0 - uSeason.z * 0.6;
+        dry = mix(dry, 0.85 + 0.15 * fract(aOff.w * 5.3), uBiome);   // саванна: почти вся трава сухая, золотая
         #ifdef FINE_GRASS
         // приглушённые природные цвета: тёмный низ, оливково-зелёные кончики, у части — соломенные
         vec3 baseC = vec3(0.028, 0.05, 0.013);
@@ -149,6 +151,7 @@ function makeLayer(base, count, tile, dist, heightTex, shared, rnd, flowers, fin
         vec3 tip = mix(tipLush, tipDry, dry * 0.8) * (0.8 + 0.4 * fract(aOff.w * 31.1));
         vGrassCol = mix(baseC, tip, smoothstep(0.0, 0.9, t)) * mix(1.0, 0.88, hs.b);
         vGrassCol *= 1.0 - uSeason.w * 0.25;
+        vGrassCol = mix(vGrassCol, vGrassCol * vec3(1.18, 1.05, 0.7), uBiome);
         vGrassCol = mix(vGrassCol, vec3(0.30, 0.25, 0.15) * (0.45 + 0.55 * t), uSeason.y);
         ${flowers ? `
         if (color.g > 1.5) {

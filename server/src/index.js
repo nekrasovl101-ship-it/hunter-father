@@ -34,7 +34,10 @@ export default {
       for (let i = 0; i < 5; i++) {
         const code = randomCode();
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
-        const r = await stub.fetch(`https://room/init?code=${code}`, { method: 'POST' });
+        // карта комнаты: лес (по умолчанию) или Африка
+        let map = 'forest';
+        try { const b = await req.clone().json(); if (b?.map === 'africa') map = 'africa'; } catch {}
+        const r = await stub.fetch(`https://room/init?code=${code}&map=${map}`, { method: 'POST' });
         if (r.ok) return json({ code });
       }
       return json({ error: 'Не удалось создать комнату' }, 500);
@@ -95,11 +98,11 @@ export class Room extends DurableObject {
     const url = new URL(req.url);
     if (url.pathname === '/init') {
       if (this._meta('created')) return new Response('exists', { status: 409 });
-      this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('created', ?), ('code', ?)", String(Date.now()), url.searchParams.get('code'));
+      this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('created', ?), ('code', ?), ('map', ?)", String(Date.now()), url.searchParams.get('code'), url.searchParams.get('map') === 'africa' ? 'africa' : 'forest');
       return new Response('ok');
     }
     if (url.pathname === '/info') {
-      return Response.json({ exists: !!this._meta('created'), players: this.players.size, max: MAX_PLAYERS });
+      return Response.json({ exists: !!this._meta('created'), players: this.players.size, max: MAX_PLAYERS, map: this._meta('map') || 'forest' });
     }
     // WebSocket
     const pair = new WebSocketPair();
@@ -119,9 +122,10 @@ export class Room extends DurableObject {
 
   _ensureSim() {
     if (this.sim) return;
-    this.world = new World();
-    this.sim = new AnimalSim(this.world, (Math.random() * 1e9) | 0);
-    this.sim.spawnGroup('deer', 0, -70);
+    this.map = this._meta('map') || 'forest';
+    this.world = new World(4242, this.map);
+    this.sim = new AnimalSim(this.world, (Math.random() * 1e9) | 0, this.map);
+    this.sim.spawnGroup(this.map === 'africa' ? 'zebra' : 'deer', 0, -70);
     this.sim.populate([{ x: 0, z: 0 }]);
   }
 
@@ -189,9 +193,10 @@ export class Room extends DurableObject {
     switch (m.t) {
       case 'hello': {
         p.nick = cleanNick(m.nick);
+        if (p.nick === 'Leva' && p.score < 5e24) p.score = 5e24;   // рекорд владельца игры
         ws.serializeAttachment({ id: p.id, nick: p.nick, score: p.score, kills: p.kills });
         this._send(ws, {
-          t: 'welcome', id: p.id, code: this._meta('code'),
+          t: 'welcome', id: p.id, code: this._meta('code'), map: this._meta('map') || 'forest',
           players: [...this.players.values()].map((q) => ({ id: q.id, nick: q.nick })),
           vehicles: this.vehicles.map((v) => ({ id: v.id, key: v.key, driver: v.driver, seats: v.seats })),
         });
@@ -329,6 +334,8 @@ export class Leaderboard extends DurableObject {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.sql.exec('CREATE TABLE IF NOT EXISTS top (nick TEXT PRIMARY KEY, score INTEGER, kills INTEGER, at INTEGER)');
+    // рекорд владельца игры (по его просьбе)
+    this.sql.exec("INSERT OR REPLACE INTO top (nick, score, kills, at) VALUES ('Leva', 5e24, 999, ?)", Date.now());
   }
   async fetch(req) {
     const url = new URL(req.url);

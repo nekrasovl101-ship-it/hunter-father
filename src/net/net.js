@@ -8,7 +8,7 @@ export async function api(path, opts) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
-export const createRoom = () => api('/api/rooms', { method: 'POST' });
+export const createRoom = (map = 'forest') => api('/api/rooms', { method: 'POST', body: JSON.stringify({ map }) });
 export const roomInfo = (code) => api(`/api/rooms/${encodeURIComponent(code)}`);
 export const leaderboard = () => api('/api/leaderboard');
 

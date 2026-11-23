@@ -21,6 +21,17 @@ export const MODELS = {
     tusks: true,
   },
   hare: { url: 'models/hare.glb', height: 0.45, yaw: 0, hop: true, anims: {} },
+  // ---------- Африка ----------
+  // зебра — Quaternius (CC0), с анимациями; остальные — Poly by Google и др. (CC-BY 3.0), без анимаций:
+  // gait — процедурная походка (покачивание, кивки), падение набок при гибели
+  zebra: { url: 'models/africa/zebra.glb', height: 1.55, yaw: 0, flatten: true, anims: STD },
+  gazelle: { url: 'models/deer.glb', height: 1.05, yaw: 0, flatten: true, tint: 0xc39a64, anims: STD },
+  giraffe: { url: 'models/africa/giraffe.glb', height: 5.0, yaw: -Math.PI / 2, rotX: -Math.PI / 2, gait: true, anims: {} },
+  elephant: { url: 'models/africa/elephant.glb', height: 3.2, yaw: -Math.PI / 2, tint: 0x77716a, gait: true, anims: {} },
+  rhino: { url: 'models/africa/rhino.glb', height: 1.75, yaw: 0, tint: 0x6f6a64, gait: true, anims: {} },
+  hippo: { url: 'models/africa/hippo.glb', height: 1.5, yaw: Math.PI / 2, tint: 0x6a5a60, gait: true, anims: {} },
+  lion: { url: 'models/africa/lion.glb', height: 1.2, yaw: 0, gait: true, anims: {} },
+  hyena: { url: 'models/africa/hyena.glb', height: 0.85, yaw: 0, gait: true, anims: {} },
   // Другие охотники в онлайне (Quaternius Adventurer, CC0)
   hunter: {
     url: 'models/hunter.glb', height: 1.8, yaw: 0,

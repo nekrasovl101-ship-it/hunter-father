@@ -54,7 +54,58 @@ export const SPECIES = {
     aggressive: 'predator', damage: 8, attackRange: 1.9, attackCd: 1.5,
     hitboxes: quad({ bh: 0.66, bl: 0.55, br: 0.27, hy: 0.85, hz: 0.72, hr: 0.16 }),
   },
+  // ---------- Африка (карта «Саванна») ----------
+  zebra: {
+    map: 'africa', name: 'Зебра', hp: 130, walk: 1.4, run: 13, turn: 2.6, radius: 0.6,
+    hearing: 180, sight: 40, score: 140, herd: [3, 7], count: 18,
+    hitboxes: quad({ bh: 1.0, bl: 0.8, br: 0.42, hy: 1.45, hz: 0.95, hr: 0.22 }),
+  },
+  gazelle: {
+    map: 'africa', name: 'Газель', hp: 60, walk: 1.4, run: 15, turn: 4, radius: 0.35,
+    hearing: 190, sight: 45, score: 110, herd: [3, 6], count: 16, zigzag: true,
+    hitboxes: quad({ bh: 0.66, bl: 0.5, br: 0.26, hy: 1.0, hz: 0.6, hr: 0.13 }),
+  },
+  giraffe: {
+    map: 'africa', name: 'Жираф', hp: 240, walk: 1.3, run: 9, turn: 1.8, radius: 0.9,
+    hearing: 200, sight: 70, score: 300, herd: [2, 4], count: 9,
+    hitboxes: quad({ bh: 2.1, bl: 1.0, br: 0.62, hy: 4.6, hz: 1.25, hr: 0.3 }),
+  },
+  elephant: {
+    map: 'africa', name: 'Слон', hp: 650, walk: 1.1, run: 6.5, turn: 1.4, radius: 1.7,
+    hearing: 170, sight: 30, score: 500, herd: [2, 5], count: 9,
+    aggressive: 'wounded', damage: 35, attackRange: 3.4, attackCd: 2,
+    hitboxes: quad({ bh: 2.0, bl: 1.6, br: 1.15, hy: 2.6, hz: 2.1, hr: 0.6 }),
+  },
+  rhino: {
+    map: 'africa', name: 'Носорог', hp: 420, walk: 1.2, run: 9, turn: 2, radius: 1.1,
+    hearing: 160, sight: 18, score: 420, herd: [1, 2], count: 5,
+    aggressive: 'wounded', damage: 30, attackRange: 2.6, attackCd: 1.8,
+    hitboxes: quad({ bh: 1.0, bl: 1.4, br: 0.78, hy: 1.1, hz: 1.85, hr: 0.42 }),
+  },
+  hippo: {
+    map: 'africa', name: 'Бегемот', hp: 460, walk: 1.0, run: 7, turn: 1.8, radius: 1.2,
+    hearing: 150, sight: 20, score: 380, herd: [2, 4], count: 6,
+    aggressive: 'wounded', damage: 30, attackRange: 2.6, attackCd: 1.8,
+    hitboxes: quad({ bh: 0.9, bl: 1.3, br: 0.82, hy: 1.0, hz: 1.65, hr: 0.44 }),
+  },
+  lion: {
+    map: 'africa', name: 'Лев', hp: 190, walk: 1.5, run: 13, turn: 3.2, radius: 0.6,
+    hearing: 220, sight: 60, score: 400, herd: [1, 3], count: 6,
+    aggressive: 'predator', damage: 12, attackRange: 2.2, attackCd: 1.4,
+    hitboxes: quad({ bh: 0.85, bl: 0.8, br: 0.4, hy: 1.1, hz: 1.0, hr: 0.26 }),
+  },
+  hyena: {
+    map: 'africa', name: 'Гиена', hp: 110, walk: 1.6, run: 11, turn: 3.4, radius: 0.45,
+    hearing: 210, sight: 50, score: 160, herd: [3, 5], count: 7,
+    aggressive: 'predator', damage: 7, attackRange: 1.9, attackCd: 1.5,
+    hitboxes: quad({ bh: 0.62, bl: 0.55, br: 0.3, hy: 0.8, hz: 0.75, hr: 0.18 }),
+  },
 };
+
+// звери выбранной карты (лес — без пометки map)
+export const speciesFor = (map) => Object.entries(SPECIES).filter(([, sp]) => (sp.map || 'forest') === map);
+// на карте зверей теперь больше: численность каждого вида × 1.5
+export const COUNT_MUL = 1.5;
 
 const TAU = Math.PI * 2;
 const wrapAngle = (a) => ((a + Math.PI) % TAU + TAU) % TAU - Math.PI;
@@ -66,8 +117,9 @@ export function isBlocked(x, z) {
 }
 
 export class AnimalSim {
-  constructor(world, seed = 99) {
+  constructor(world, seed = 99, map = 'forest') {
     this.world = world;
+    this.map = map;
     this.rnd = mulberry32(seed);
     this.animals = [];
     this.nextId = 1;
@@ -116,10 +168,10 @@ export class AnimalSim {
   }
 
   populate(players = []) {
-    for (const [type, sp] of Object.entries(SPECIES)) {
+    for (const [type, sp] of speciesFor(this.map)) {
       let have = 0;
-      while (have < sp.count) {
-        const pt = this.findSpawnPoint(players, type === 'wolf' ? 160 : 60);
+      while (have < Math.round(sp.count * COUNT_MUL)) {
+        const pt = this.findSpawnPoint(players, sp.aggressive === 'predator' ? 160 : 60);
         if (!pt) break;
         const n = this.spawnGroup(type, pt[0], pt[1]);
         if (!n) continue;
@@ -190,9 +242,9 @@ export class AnimalSim {
     if (this.respawnT > 5) {
       this.respawnT = 0;
       for (const a of [...this.animals]) if (a.state === 'dead' && a.deadTime > 90) this.remove(a);
-      for (const [type, sp] of Object.entries(SPECIES)) {
+      for (const [type, sp] of speciesFor(this.map)) {
         const alive = this.animals.filter((a) => a.type === type && a.state !== 'dead').length;
-        if (alive <= sp.count - sp.herd[1]) {
+        if (alive <= Math.round(sp.count * COUNT_MUL) - sp.herd[1]) {
           const pt = this.findSpawnPoint(players, 180);
           if (pt) this.spawnGroup(type, pt[0], pt[1]);
         }

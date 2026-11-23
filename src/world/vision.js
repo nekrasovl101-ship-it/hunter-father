@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 
 // Спецзрение поверх обычной картинки:
 //  1 — тепловизор (white-hot): всё холодное — тёмно-серое, звери и охотники светятся белым
@@ -19,8 +20,11 @@ const VisionShader = {
       vec3 o = c;
       if (uMode > 0.5 && uMode < 1.5) {
         // тепловизор: холодный мир сжат в тёмно-серый диапазон, тёплые тела (l >> 1) — белые
+        // холодный мир — по яркости в тёмно-сером диапазоне; тепло — только по пурпурной метке зверей/людей
         float cold = clamp(l * 0.2, 0.0, 0.24);
-        float hot = smoothstep(1.4, 3.5, l);
+        float heat = min(c.r, c.b) - c.g * 3.0;
+        float hot = smoothstep(0.6, 2.4, heat);
+        cold *= 1.0 - smoothstep(0.2, 0.6, heat);
         float v = mix(cold, 1.0, hot) + n * 0.03;
         o = vec3(v) * vec3(0.96, 0.98, 1.0);
       } else if (uMode > 1.5) {
@@ -55,10 +59,9 @@ export class Vision {
         depthTest: false, depthWrite: false,
       });
       this.uniforms = this.mat.uniforms;
-      this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.mat);
-      this.quadScene = new THREE.Scene();
-      this.quadScene.add(this.quad);
-      this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      this.uniforms.tDiffuse.value = this.rt.texture;   // без этого тепловизор показывал чёрный экран
+      // полноэкранный треугольник (прежний квадрат в плоскости камеры отсекался — экран был чёрным)
+      this.quad = new FullScreenQuad(this.mat);
     }
   }
 
@@ -80,7 +83,7 @@ export class Vision {
     r.render(scene, camera);
     r.setRenderTarget(null);
     r.toneMapping = THREE.NoToneMapping;
-    r.render(this.quadScene, this.quadCam);
+    this.quad.render(r);
     r.toneMapping = tm;
   }
 

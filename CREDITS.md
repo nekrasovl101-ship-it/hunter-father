@@ -46,6 +46,20 @@
 
 Оригиналы паков: https://quaternius.com
 
+## Звери Африки (poly.pizza)
+
+| Зверь | Автор | Лицензия | Источник |
+|---|---|---|---|
+| Зебра | Quaternius | CC0 1.0 | https://poly.pizza/m/iclPBR6SBZ |
+| Жираф | Poly by Google | CC-BY 3.0 | https://poly.pizza/m/c3mlL5owLJA |
+| Лев | Poly by Google | CC-BY 3.0 | https://poly.pizza/m/daMBBUnd9c9 |
+| Слон | elkiotbear | CC-BY 3.0 | https://poly.pizza/m/3AfO8NwcxD |
+| Носорог | Poly by Google | CC-BY 3.0 | https://poly.pizza/m/11qk1uy0YGH |
+| Бегемот | jeremy | CC-BY 3.0 | https://poly.pizza/m/6fQJsxfOGUP |
+| Гиена | Poly by Google | CC-BY 3.0 | https://poly.pizza/m/0yU1LU3Nkpu |
+
+Модели CC-BY 3.0 (https://creativecommons.org/licenses/by/3.0/) изменены: масштаб, поворот, перекраска; газель — перекрашенная модель оленя Quaternius.
+
 ## Сделано в проекте (без сторонних ассетов)
 
 - Деревья (ели и лиственные из «карточек»), кусты, камни, трава, цветы, вода, небо с облаками — процедурная геометрия и шейдеры. Текстура еловой лапы рисуется кодом.

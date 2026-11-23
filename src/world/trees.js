@@ -328,23 +328,51 @@ function crossQuads(width, height) {
   return g;
 }
 
+// Акация (саванна): раздвоенный наклонный ствол и плоская широкая «зонтичная» крона
+function acacia(rnd) {
+  const o = { pos: [], nrm: [], uv: [], idx: [] };
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < 70; i++) {
+    const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * 4.6;
+    const p = new THREE.Vector3(Math.cos(a) * rr, 6.4 + (rnd() - 0.5) * 0.7 - (rr / 4.6) * 0.5, Math.sin(a) * rr);
+    // карточки почти горизонтальные — плоский зонтик
+    const facing = new THREE.Vector3((rnd() - 0.5) * 0.5, 1, (rnd() - 0.5) * 0.5).normalize();
+    const t1 = new THREE.Vector3().crossVectors(facing, new THREE.Vector3(1, 0, 0)).normalize();
+    const t2 = new THREE.Vector3().crossVectors(facing, t1).normalize();
+    const size = 1.6 + rnd() * 1.1;
+    card(o, p.clone().addScaledVector(t2, -size / 2), t2, t1, size, size, up);
+  }
+  const parts = [];
+  const lean = (rnd() - 0.5) * 0.25;
+  const tr = trunkGeo(0.12, 0.26, 3.6, 7, [2, 3]); tr.rotateZ(lean); parts.push(tr);
+  for (const s of [-1, 1]) {
+    const g = trunkGeo(0.06, 0.13, 3.4, 6, [1, 2]);
+    g.rotateZ(s * (0.55 + rnd() * 0.2)); g.translate(Math.sin(-lean) * 3.4, 3.3, 0);
+    parts.push(g);
+  }
+  return { trunk: mergeGeometries(parts), crown: toGeo(o), height: 7.6, width: 9.6 };
+}
+
 export async function createTrees(world, preset, barkSet, barkBroadSet, shared, renderer) {
   const rnd = mulberry32(5);
   const needles = needleBranchTexture();
   const leaves = await leafClusterTexture();
-  const types = [spruce(rnd), broadleaf(rnd)];
-  const barkMats = [barkSet, barkBroadSet].map((b) => new THREE.MeshStandardMaterial({
+  const types = [spruce(rnd), broadleaf(rnd), acacia(rnd)];
+  const barkMats = [barkSet, barkBroadSet, barkBroadSet].map((b) => new THREE.MeshStandardMaterial({
     map: b.albedo, normalMap: preset.normalMaps ? b.normal : null, roughnessMap: b.rough, roughness: 1, metalness: 0,
   }));
   const crownMats = [crownMaterial(needles, shared, preset, 0.01), crownMaterial(leaves, shared, preset, 0.03, true)];
   crownMats[1].color.set(0x7d8a62); // листва темнее и менее жёлтая
+  crownMats.push(crownMaterial(leaves, shared, preset, 0.02, true));
+  crownMats[2].color.set(0x8a9258); // акация: сухая оливковая листва
 
   const group = new THREE.Group();
   const lods = [];
   const farMats = [];
-  for (const type of [0, 1]) {
+  for (const type of [0, 1, 2]) {
     const T = types[type];
     const items = world.trees.filter((t) => t.type === type);
+    if (!items.length) continue;
     const mats = makeMatrices(items);
     const capHi = Math.min(items.length, 700);
     const trunk = new THREE.InstancedMesh(T.trunk, barkMats[type], capHi);
@@ -369,7 +397,7 @@ export async function createTrees(world, preset, barkSet, barkBroadSet, shared, 
   for (let i = 0; i < 5200 && bushes.length < 2600; i++) {
     const x = (brnd() * 2 - 1) * (PLAY_LIMIT - 10), z = (brnd() * 2 - 1) * (PLAY_LIMIT - 10);
     const f = forestAt(x, z);
-    if (brnd() > f * 0.8 + 0.08) continue;
+    if (brnd() > (world.map === 'africa' ? f * 0.25 + 0.03 : f * 0.8 + 0.08)) continue;
     if (riverDist(x, z) < RIVER_HALF + 4 || roadDist(x, z) < 4 || siteDist(x, z) < 4 || slopeAt(x, z) > 0.7) continue;
     bushes.push({ x, z, y: heightAt(x, z) - 0.1, s: 0.6 + brnd() * 0.7, rot: brnd() * 6.28 });
   }
@@ -395,7 +423,7 @@ export async function createTrees(world, preset, barkSet, barkBroadSet, shared, 
   group.add(bushMesh);
   lods.push(new InstanceLOD(bushes, makeMatrices(bushes), [bushMesh], null, Math.min(70, preset.viewDist * 0.4), 0));
 
-  group.update = (cam, force) => lods.forEach((l) => l.update(cam, force));
+  group.update = (cam, force, view) => lods.forEach((l) => l.update(cam, force, view));
   // яркость импостеров следует за временем суток
   group.setLight = (k) => farMats.forEach((m) => m.color.setScalar(k));
   return group;

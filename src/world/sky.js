@@ -237,16 +237,16 @@ export class SkySystem {
   // Материал для дальних гор: фото-текстура скал (трипланарно — без растяжения на кручах),
   // тёмный хвойный лес у подножия, промоины-расселины вдоль склона, снег там, где он держится,
   // освещение от солнца с детальным рельефом и воздушная перспектива (дальше — голубее и светлее)
-  farMaterial(viewDist, rock) {
+  farMaterial(viewDist, rock, biome = 0) {
     return new THREE.ShaderMaterial({
       uniforms: { ...this.uniforms, uWinter: { value: this.winter ? 1 : 0 }, uLightDir: { value: this.sunDir }, uFogColor: { value: this.scene.fog.color },
-        uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 }, tRock: { value: rock?.albedo || null }, uHasRock: { value: rock ? 1 : 0 }, uThick: this.thickU },
+        uNear: { value: viewDist * 0.75 }, uFar: { value: viewDist * 1.5 }, tRock: { value: rock?.albedo || null }, uHasRock: { value: rock ? 1 : 0 }, uThick: this.thickU, uBiomeF: { value: biome } },
       vertexShader: /* glsl */`
         varying vec3 vW; varying vec3 vN;
         void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vN = normal; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
         uniform vec3 uZenith, uHorizon, uSunColor, uFogColor, uLightDir;
-        uniform float uNear, uFar, uNight, uWinter, uHasRock, uThick;
+        uniform float uNear, uFar, uNight, uWinter, uHasRock, uThick, uBiomeF;
         uniform sampler2D tRock;
         varying vec3 vW; varying vec3 vN;
         float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -281,13 +281,15 @@ export class SkySystem {
           // хвойный лес: тёмная зелень с «кронами» (крапинки), заходит языками по ложбинам
           float trees = vn(vW.xz * 0.35) * 0.6 + vn(vW.xz * 1.3) * 0.4;
           vec3 forest = mix(vec3(0.028, 0.045, 0.025), vec3(0.06, 0.085, 0.045), trees) * (0.85 + 0.3 * macro);
+          // саванна: вместо тайги — выгоревшая трава с пятнами колючих кустов
+          forest = mix(forest, mix(vec3(0.3, 0.24, 0.12), vec3(0.42, 0.34, 0.17), trees) * (0.8 + 0.3 * macro), uBiomeF);
           float treeLine = 105.0 + macro * 55.0 + gully * 20.0;
           float forestK = (1.0 - smoothstep(treeLine - 25.0, treeLine, vW.y)) * (1.0 - smoothstep(0.42, 0.62, slope + (trees - 0.5) * 0.15));
           vec3 col = mix(rock, forest, forestK);
           // альпийские луга между лесом и скалами
           col = mix(col, vec3(0.16, 0.17, 0.09) * (0.8 + 0.4 * trees), (1.0 - forestK) * (1.0 - smoothstep(0.3, 0.5, slope)) * (1.0 - smoothstep(treeLine, treeLine + 45.0, vW.y)) * 0.7);
           // снег: выше линии, держится на пологом, лежит в промоинах, сдувается с гребней
-          float snowLine = mix(150.0, 25.0, uWinter) + macro * 40.0 - gully * 30.0;
+          float snowLine = mix(150.0, 25.0, uWinter) + macro * 40.0 - gully * 30.0 + uBiomeF * 260.0;
           float snowK = smoothstep(snowLine, snowLine + 30.0, vW.y + (fbm3(vW.xz * 0.03) - 0.5) * 30.0) * (1.0 - smoothstep(0.62, 0.9, slope - gully * 0.25));
           vec3 snow = vec3(0.9, 0.93, 0.97);
           col = mix(col, snow, snowK);

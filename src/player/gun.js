@@ -56,8 +56,8 @@ export const MAG_SIZE = 5;
 // Оружие: охотничий карабин и снайперская винтовка (свой магазин, медленнее затвор, сильнее отдача,
 // оптика с переменным приближением 4×–16× и ночным видением)
 export const WEAPONS = {
-  rifle: { name: 'Ружьё', mag: 5, reserve: 25, cycle: 0.95, kick: 1, scale: 1 },
-  sniper: { name: 'Снайперская', mag: 5, reserve: 20, cycle: 1.35, kick: 1.6, scale: 1.14 },
+  rifle: { name: 'Ружьё', mag: 5, reserve: 80, cycle: 0.95, kick: 1, scale: 1 },
+  sniper: { name: 'Снайперская', mag: 5, reserve: 50, cycle: 1.35, kick: 1.6, scale: 1.14 },
 };
 
 export class Rifle {
@@ -77,8 +77,8 @@ export class Rifle {
     this.weapon = 'rifle';
     this.magSize = MAG_SIZE;
     this.ammo = MAG_SIZE;
-    this.reserve = 25;
-    this.stock = { rifle: { ammo: MAG_SIZE, reserve: 25 }, sniper: { ammo: WEAPONS.sniper.mag, reserve: WEAPONS.sniper.reserve } };
+    this.reserve = 80;
+    this.stock = { rifle: { ammo: MAG_SIZE, reserve: 80 }, sniper: { ammo: WEAPONS.sniper.mag, reserve: WEAPONS.sniper.reserve } };
     this.state = 'ready';   // ready | cycling | reloading
     this.timer = 0;
     this.aimT = 0;

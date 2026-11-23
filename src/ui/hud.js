@@ -40,7 +40,7 @@ export class Hud {
     const bullets = '▮'.repeat(gun.ammo) + '▯'.repeat(Math.max(0, (gun.magSize || MAG_SIZE) - gun.ammo));
     const state = gun.state === 'reloading' ? ' <small>перезарядка…</small>' : '';
     this.ammo.innerHTML = `<b>${bullets}</b> <span>${gun.reserve}</span>${state}`;
-    this.score.innerHTML = `Добыча: <b>${kills}</b> · Очки: <b>${score}</b>`;
+    this.score.innerHTML = `Добыча: <b>${kills}</b> · Очки: <b>${Number(score || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 })}</b>`;
     this.scope.classList.toggle('on', gun.aimT > 0.92);
     this.cross.style.opacity = gun.aimT > 0.5 ? 0 : 1;
     // компас: yaw=0 — смотрим на север (-Z)

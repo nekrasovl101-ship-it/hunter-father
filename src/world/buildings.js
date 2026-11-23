@@ -284,18 +284,30 @@ export function createBuildings(world, preset, sets) {
     lamp: new THREE.MeshStandardMaterial({ color: 0x302820, emissive: 0xffc060, emissiveIntensity: 1.6 }),
   };
   const group = new THREE.Group();
+  // Склеиваем по участкам карты 200×200 м (а не всё сразу): дома за спиной и за краем кадра
+  // не рисуются — ни в кадре, ни в тенях. Раньше все постройки карты рисовались всегда.
+  const CELL = 200;
   for (const [name, list] of Object.entries(all.parts)) {
-    const geo = mergeGeometries(list.map((g) => {
+    const cells = new Map();
+    for (let g of list) {
       g = g.index ? g.toNonIndexed() : g;
       for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
-      return g;
-    }));
-    const mesh = new THREE.Mesh(geo, mats[name]);
-    mesh.castShadow = preset.shadows && name !== 'glass';
-    if (name === 'glass') mesh.renderOrder = 5;
-    mesh.receiveShadow = preset.shadows;
-    mesh.matrixAutoUpdate = false;
-    group.add(mesh);
+      g.computeBoundingBox();
+      const c = g.boundingBox.getCenter(new THREE.Vector3());
+      const key = Math.floor(c.x / CELL) + ',' + Math.floor(c.z / CELL);
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(g);
+    }
+    for (const parts of cells.values()) {
+      const geo = mergeGeometries(parts);
+      geo.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geo, mats[name]);
+      mesh.castShadow = preset.shadows && name !== 'glass';
+      if (name === 'glass') mesh.renderOrder = 5;
+      mesh.receiveShadow = preset.shadows;
+      mesh.matrixAutoUpdate = false;
+      group.add(mesh);
+    }
   }
   group.towers = towers;
   // окна светятся к вечеру

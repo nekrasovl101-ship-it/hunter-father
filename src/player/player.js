@@ -21,6 +21,7 @@ export class Player {
     this.platform = null;   // {x, z, y, r} — стоим на вышке
     this.dirt = 0;          // 0..1 — насколько охотник в грязи
     this.fallT = 0;         // > 0 — лежит после падения
+    this.fovMul = 1;        // приближение тепловизора
   }
 
   // падение: поскользнулся в грязи (slip) или неудачно приземлился с высоты (high)
@@ -112,7 +113,7 @@ export class Player {
     this.fallK = eye < EYE ? 1 - eye / EYE : 0;
     this.camera.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
     this.camera.rotation.set(this.pitch + tilt, this.yaw, roll, 'YXZ');
-    const fov = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.baseFov, aimFov, aimT * aimT), 9, binocT * binocT);
+    const fov = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.baseFov, aimFov, aimT * aimT), 9, binocT * binocT) * (this.fovMul || 1);
     if (Math.abs(fov - this.camera.fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
   }
 

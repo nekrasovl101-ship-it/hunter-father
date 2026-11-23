@@ -63,6 +63,30 @@ export class AnimalViews {
     if (a.speed < 0.3) inner.rotation.x = Math.sin(performance.now() * 0.003 + a.id) * 0.04;
   }
 
+  // Процедурная походка для моделей без скелета (слон, жираф, лев…): шаг — покачивание и кивки,
+  // бег — галоп с подскоком, на месте — дыхание; гибель — заваливается набок
+  _gait(v, a, dt) {
+    const inner = v.model.root.children[0];
+    const base = -v.model.asset.minY * v.model.asset.scale;
+    if (a.state === 'dead') {
+      v.deadRoll = Math.min(Math.PI / 2 * 0.92, (v.deadRoll || 0) + dt * 2.2);
+      inner.rotation.z = v.deadRoll;
+      inner.position.y = base * (1 - v.deadRoll * 0.35);
+      return;
+    }
+    v.deadRoll = 0; inner.rotation.z = 0;
+    const h = v.model.asset.cfg.height;
+    const sp = a.speed || 0;
+    v.gaitT = (v.gaitT || 0) + dt * (sp > 0.2 ? 1.2 + sp * 0.55 / Math.sqrt(h) : 0);
+    const ph = v.gaitT * Math.PI * 2;
+    const run = Math.min(1, Math.max(0, (sp - 3) / 4));
+    const amp = Math.min(0.06 * h, sp * 0.012 * h) * (1 + run * 1.5);
+    inner.position.y = base + Math.abs(Math.sin(ph)) * amp * (0.5 + run);
+    inner.rotation.x = Math.sin(ph) * (0.025 + run * 0.06);          // кивок/галоп
+    inner.rotation.y = (v.model.asset.cfg.yaw || 0) + Math.sin(ph * 0.5) * 0.03 * (1 - run);
+    if (sp < 0.2) inner.position.y = base + Math.sin(performance.now() * 0.0015 + a.id) * 0.004 * h;   // дыхание
+  }
+
   // animals: массив состояний {id,type,x,z,heading,anim,speed}
   sync(animals, dt, camera) {
     const seen = new Set();
@@ -96,6 +120,7 @@ export class AnimalViews {
 
       v.model.play(a.anim);
       if (v.model.asset.cfg.hop) this._hop(v, a, dt);
+      else if (v.model.asset.cfg.gait) this._gait(v, a, dt);
       if (v.model.current) {
         const sp = SPECIES[a.type];
         if (a.anim === 'walk') v.model.current.timeScale = Math.max(0.4, a.speed / sp.walk);
